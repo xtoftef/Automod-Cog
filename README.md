@@ -1,7 +1,7 @@
 # Automod Cog - [discord.py]
 A simple discord.py Cog implementation to perform some specific automod tasks
 
-Check the [Running Instructions](dev_notes/BasicDocumentation)
+Check the [Basic Documentation](dev_notes/BasicDocumentation). It's a must for getting the latest info about the current state of the cog.
 
 ## Introduction
 

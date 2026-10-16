@@ -214,7 +214,7 @@ class AutomodCog(commands.Cog):
             )
             return
 
-        dummy_config = ImageRateLimiterComponentConfig.get_default("Test") 
+        dummy_config = ImageRateLimiterComponentConfig.get_default("Test") # This test guild_id won't work since the program will detect a guild_id mismatch.
         dummy_memory = JSONMemoryManager("dummy_memory.json")
         dummy_engine = AutomodEngine(dummy_memory, [guild])
     
