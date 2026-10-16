@@ -46,6 +46,7 @@ async def main():
     intents = discord.Intents.default()
     intents.message_content = True
     intents.members = True
+    intents.guilds = True
     bot = commands.Bot(command_prefix="!", intents=intents)
 
     @bot.event
@@ -55,7 +56,11 @@ async def main():
         print(f"Logged in as {bot.user} (ID: {bot.user.id})")
         print(bot.guilds)
 
-        
+        # Necessary to get all the guild data. Otherwise it initializes the automods when the bot didn't receive the guild data yet.
+        automod_cog.automod_engine.guilds = list(bot.guilds)
+        automod_cog.automod_engine.init_all_guilds_automod()
+
+
         # Sync slash commands
         await bot.tree.sync()
         print("Slash commands synced successfully.")
