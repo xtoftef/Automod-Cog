@@ -17,11 +17,8 @@ if TEST:
 else:
     DISCORD_TOKEN = os.getenv("PRODUCTION_BOT_TOKEN", None)
 
-
 if not DISCORD_TOKEN:
     raise Exception("Bot token missing. Please add it to your .env file")
-
-
 
 logger = logging.getLogger('discord')
 logger.setLevel(logging.DEBUG)

@@ -5,16 +5,19 @@ from discord import app_commands
 from typing import cast, Literal
 from collections import deque
 import time
-from datetime  import datetime, timedelta
+from datetime import timedelta
 import discord
+
 
 from src.memory_manager_implementations import JSONMemoryManager
 from src.automod_engine import AutomodEngine
-from src.component_implementations import BaseAutomodMemoryManager, BaseAutomodComponentConfig, ImageRateLimiterComponentConfig
-from DiscordUI.views import AutomodComponentConfigPanelView
 from src.automod_models import (
+    BaseAutomodComponentConfig,BaseAutomodMemoryManager,
     DeleteAction, MessageAction, TimeoutAction, DMAction, AutomodResponse
 )
+from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
+from src.automod_components.chain_prevention import ChainPreventionComponentConfig
+from DiscordUI.views import AutomodComponentConfigPanelView
 
 # TODO: Note to self when i continue working on this. After some testing, i managed to solve quite a number of issues. Now the
 # config panel is working. It feels like the architecture is nearly there, I might be able to just refactor the code now.
@@ -27,7 +30,8 @@ from src.automod_models import (
 CONFIG_REGISTRY: dict[
     str, type[BaseAutomodComponentConfig]
 ] = {
-    ImageRateLimiterComponentConfig.CONFIG_KEY: ImageRateLimiterComponentConfig
+    ImageRateLimiterComponentConfig.CONFIG_KEY: ImageRateLimiterComponentConfig,
+    ChainPreventionComponentConfig.CONFIG_KEY: ChainPreventionComponentConfig
 }
 
 
@@ -54,34 +58,49 @@ class AutomodCog(commands.Cog):
 
         if response.flagged:
             await self._handle_automod_response(response, message)
-            
 
-    async def _handle_automod_response(self,response: AutomodResponse, message: discord.Message):
-        "Handles an automod response regarding a particular message"
+
+
+    async def _handle_automod_response(self,response: AutomodResponse, message: discord.Message) -> list[str]:
+        """Handles an automod response regarding a particular message.
+        Each action runs independently, so one failing action (e.g. the user has DMs closed) doesn't stop the others.
+        Returns a list describing the actions that failed (empty if all succeeded)."""
+        failures: list[str] = []
         for action in (response.actions or []):
-            if action.action_type == 'delete':
-                action = cast(DeleteAction, action)
-                # 1. Delete the triggering message
-                await message.delete()
-            elif action.action_type == 'timeout':
-                action = cast(TimeoutAction, action)
-                    
-                exp_time = timedelta(minutes=action.duration)
+            try:
+                if action.action_type == 'delete':
+                    action = cast(DeleteAction, action)
+                    # 1. Delete the triggering message
+                    await message.delete()
 
-                if isinstance(message.author, discord.Member):
-                    await message.author.timeout(exp_time,reason=action.reason) 
+                elif action.action_type == 'timeout':
+                    action = cast(TimeoutAction, action)
 
-            elif action.action_type == 'message':
-                action = cast(MessageAction, action)
-                # 2. Send a temporary warning notice
-                warning = await message.channel.send(
-                    action.formatted_message_response,
-                    delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
-                )
-            elif action.action_type == 'dm':
-                action = cast(DMAction, action)
+                    exp_time = timedelta(minutes=action.duration)
 
-                await message.author.send(action.formatted_message_response)
+                    if isinstance(message.author, discord.Member):
+                        await message.author.timeout(exp_time,reason=action.reason)
+
+                elif action.action_type == 'message':
+                    action = cast(MessageAction, action)
+                    # 2. Send a temporary warning notice
+                    warning = await message.channel.send(
+                        action.formatted_message_response,
+                        delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
+                    )
+                elif action.action_type == 'dm':
+                    action = cast(DMAction, action)
+
+                    await message.author.send(action.formatted_message_response)
+
+            except discord.NotFound:
+                pass # Message or member is already gone (e.g. deleted by a moderator)
+            except discord.HTTPException as e: # Includes Forbidden: missing permissions, DMs closed, member outranks the bot...
+                failures.append(f"{action.action_type}: {e}")
+                print(f"Automod action '{action.action_type}' failed in channel {message.channel.id}: {e}")
+
+        return failures
+
 
     # ==============================================================================
     # AUTOCOMPLETES
@@ -230,6 +249,7 @@ class AutomodCog(commands.Cog):
         name = "dummy-config-view",
         description="Purely for testing"
     )
+    @app_commands.default_permissions(administrator=True)
     async def dummy_config(self, interaction:discord.Interaction):
         "Test command for a dummy."
         guild = interaction.guild
@@ -252,6 +272,7 @@ class AutomodCog(commands.Cog):
         )
 
     @app_commands.command(name= "test-automod")
+    @app_commands.default_permissions(administrator=True) # Can delete messages and time out members, so admins only
     async def test_automod_action(self, interaction: discord.Interaction, msg_id: str, action_type:Literal['delete', 'message', 'dm', 'timeout']):
 
         # Get message
@@ -273,8 +294,10 @@ class AutomodCog(commands.Cog):
         if not automod: return
 
         try:
-            await self._handle_automod_response(automod, msg)
-            await interaction.response.send_message("Automod action successful")
+            failures = await self._handle_automod_response(automod, msg)
+            if failures:
+                await interaction.response.send_message(f"Automod action failed. Error: {'; '.join(failures)}")
+            else:
+                await interaction.response.send_message("Automod action successful")
         except Exception as e:
             await interaction.response.send_message(f"Automod action failed. Error: {e}")
-

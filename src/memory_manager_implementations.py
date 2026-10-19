@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Type, Any
 
 from src.automod_models import (
@@ -6,14 +7,16 @@ from src.automod_models import (
     ConfigT,
     BaseAutomodComponentConfig
 )
-from src.component_implementations import ImageRateLimiterComponentConfig
+from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
+from src.automod_components.chain_prevention import ChainPreventionComponentConfig
 
 
 class JSONMemoryManager(BaseAutomodMemoryManager):
 
     CONFIG_MAP = {
         BaseAutomodComponentConfig.CONFIG_KEY : BaseAutomodComponentConfig,
-        ImageRateLimiterComponentConfig.CONFIG_KEY : ImageRateLimiterComponentConfig
+        ImageRateLimiterComponentConfig.CONFIG_KEY : ImageRateLimiterComponentConfig,
+        ChainPreventionComponentConfig.CONFIG_KEY : ChainPreventionComponentConfig
     }
 
     def __init__(self, memory_file_path: str) -> None:
@@ -35,9 +38,13 @@ class JSONMemoryManager(BaseAutomodMemoryManager):
         self.loaded_memory = loaded
 
     def save_memory(self):
+        # Write to a temporary file first, then swap it in. If the bot crashes mid-write,
+        # the old file stays intact instead of being left half-written (which would stop the bot from starting).
+        temp_path = self.file_path + ".tmp"
         try:
-            with open(self.file_path, "w") as f:
+            with open(temp_path, "w") as f:
                 json.dump(self.loaded_memory, f, indent=2)
+            os.replace(temp_path, self.file_path)
         except OSError as e:
             print(f"Ran into an error while trying to save the JSON file. Passed path: {self.file_path}")
             raise e
@@ -92,11 +99,13 @@ class JSONMemoryManager(BaseAutomodMemoryManager):
 
         
         for config_key, data in guild_configs.items():
-            try: 
+            try:
                 config_type = self.CONFIG_MAP[config_key] # can throw an error if the memory got altered
                 config_list.append(config_type.from_dict(data)) # from dict can throw an error
-            except Exception as e: 
-                raise KeyError(f"Anomalous key: {config_key}, \nGuild ID: {guild_id}\nConfig")
+            except Exception as e:
+                # Skip the broken entry instead of crashing, so one renamed/removed component or corrupted entry
+                # doesn't stop every guild's automods from starting. The entry is kept in the file untouched.
+                print(f"Skipping anomalous config. Key: {config_key}, Guild ID: {guild_id}, Error: {e!r}")
 
         return config_list
 

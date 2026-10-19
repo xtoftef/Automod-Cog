@@ -6,11 +6,12 @@ This file is a brief walkthrough of the system for the automod cog so far. I wil
 
 First of all, dependencies. Make sure you downloaded the discord.py library, which is the main thing we need.
 
-The file you will want to run is `bot.py`. However, before you do that you need to ensure you have a .env file in the workspace that contains the following:
+The file you will want to run is `bot.py`. At the top of it, `TEST = True` makes the bot use the test bot's token, and `TEST = False` the production one. You need the matching token available as an environment variable, e.g. in a .env file in the workspace:
 ```env
-DISCORD_TOKEN = <token_here>
+TEST_BOT_TOKEN = <test_token_here>
+PRODUCTION_BOT_TOKEN = <production_token_here>
 ```
-Without the token, the bot won't run.
+Without the token, the bot won't run. NOTE: `bot.py` doesn't load the .env file by itself, so set up your IDE's run configuration to load it (PyCharm and VS Code both can).
 As for the various things like the JSON file, logging files and stuff, the program will handle those on its own, so don't worry about that.
 
 ## Development notes
@@ -19,14 +20,15 @@ To be honest, the workspace is not quite ready for proper taking over and multi-
 
 Therefore, you'll find useful to know which files you want to work on if trying to implement an automod component. 
 As far as I remember, this is what you should do:
-- To implement a new component, head to [component_implementations.py](/src/component_implementations.py). You'll want to implement the following: `BaseAutomodComponentConfig`, `BaseAutomodComponent` and `BaseChannelManager`. You might find useful to use the existing component implementation (ImageRateLimiter, etc.) as a reference. 
+- To implement a new component, create its own file in [src/automod_components/](/src/automod_components/). You'll want to implement the following: `BaseAutomodComponentConfig`, `BaseAutomodComponent` and `BaseChannelManager`. You might find useful to use the existing components ([image_rate_limiter.py](/src/automod_components/image_rate_limiter.py), [chain_prevention.py](/src/automod_components/chain_prevention.py)) as a reference. Also override `RESPONSE_PLACEHOLDERS` on your config so the general modal shows the right placeholders, and use `safe_format` from [utils.py](/utils.py) in `format_response` so a bad admin template can't break the automod. When your automod flags a message, return the actions the bot should take (see `AutomodResponse` below). The step-by-step guide with a skeleton is in the [CHANGELOG](/CHANGELOG.md#how-to-add-a-new-automod-feature). 
 - Once the component's backend is done, you only need to to head to [modals.py](/DiscordUI/modals.py) to implement the specific modal for your component's unique settings. 
 - Lastly, a bunch of the classes require a sort of dictionary that maps a config key to the respective component or its config. You'll need to manually add your component to these. This is something I'm planning to change so that you only need to add the component to one place once it's ready, but for now this is how it is. Here are some quick links to where to find them:
     - `__all__` modification in [modals.py](/DiscordUI/modals.py#L1). Just add your modal class to the dunder all.
-    - `unique_modal_router` add your modal class to the match-case ladder. [modals.py](/DiscordUI/modals.py#L240)
-    - `AVAILABLE_COMPONENTS`. Head to [automod_engine.py](/src/automod_engine.py#L18). Add your component there (you might need to add it to the imports on top)
-    - `from_config` Add your component class to the router. [component_implementations.py](/src/component_implementations.py#L17)
-    - `CONFIG_MAP` Add your config class to the dictionary/map. [memory_manager_implementations.py](/src/memory_manager_implementations.py#14)
+    - `unique_modal_router` add your modal class to the match-case ladder. [modals.py](/DiscordUI/modals.py). Use a class pattern with parentheses (`case YourConfig():`). A bare name (`case YourConfig:`) is a capture pattern that matches everything and makes the file fail to import once there's more than one case.
+    - `AVAILABLE_COMPONENTS`. Head to [automod_engine.py](/src/automod_engine.py). Add your component there (you might need to add it to the imports on top)
+    - `from_config` Add your component class to the router in `BaseAutomodComponent.from_config`. [automod_models.py](/src/automod_models.py). Add it before the final `raise`.
+    - `CONFIG_MAP` Add your config class to the dictionary/map. [memory_manager_implementations.py](/src/memory_manager_implementations.py)
+    - `CONFIG_REGISTRY` Add your config class to the dictionary. [automod_cog.py](/automod_cog.py). Without it, `/config-add` rejects your component.
 
 # About the architecture
 
@@ -106,7 +108,15 @@ Below are important classes that currently exists in that file:
 - `BaseAutomodMemoryManager` - Abstract class
 
 ## `AutomodResponse`
-This is basically a small wrapper for the response that the engine returns to the bot. The response will contain the information on whether or not the message tripped the automod, this will then allow the bot to take action based on the response received from the engine. 
+This is basically a small wrapper for the response that the engine returns to the bot. It holds `flagged` (whether the message tripped the automod), `reason` (a short explanation, useful for logs) and `actions`, the list of things the bot should do about it, or `None`. The bot runs the actions in order in `_handle_automod_response` ([automod_cog.py](/automod_cog.py)). Each one runs on its own, so a failed DM doesn't stop the delete.
+
+The available actions (all subclasses of `BotAction`):
+- `DeleteAction()` deletes the flagged message.
+- `MessageAction(text)` posts a message in the channel, deleted after 5 seconds.
+- `DMAction(text)` DMs the member.
+- `TimeoutAction(minutes, reason)` times the member out.
+
+To add a new kind of action, add a `BotAction` subclass in [automod_models.py](/src/automod_models.py) and handle its `action_type` in `_handle_automod_response`. 
 
 ## `BaseAutomodComponentConfig`
 This is an abstract dataclass that specific configs will inherit/implement. The idea is that most automods have paramaters/configurations that are in common, such as affected channels, ignored roles or a particular response. This base class is intended to handle all of these so that the specific implementations of the automod only need to worry about their own specific settings.
@@ -131,7 +141,7 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         self.memory = memory
         self.channels: dict[str, ManagerT] = {}
         self.initialize_channel_helpers(guild)
-        if not self._config_key_matches:
+        if not self._config_key_matches():
             raise NotImplementedError((f"Config Key mismatch detected.\nComponent key: {self.CONFIG_KEY}"
                                        f"\nPassed Config key: {self.config.CONFIG_KEY}\nMake sure you implemented the automod component properly."))
 ```
@@ -149,9 +159,15 @@ The exact methods that you will need to implement that class is up to you, since
 This is an abstract class that defines methods that the engine will call to interact with the persistent storage. Whether you use a JSON based storage or a database, the engine does not care. That's the advantage of this abstract class. Currently there's only a JSON implementation, but later on we might move to a database, and the migration will not require any change to the engine's logic. 
 For the most part, it's only concerned about accessing/modifying the data of the various servers and their respective automods settings. 
 
-# component_implementations.py
-Heading to [component_implementations.py](/src/component_implementations.py)
-This is essentially the file where all the automod implementations are done. Currently there's only a single one one which is the ImageRateLimiter. 
+# automod_components/
+Heading to [automod_components](/src/automod_components/)
+This folder holds the automod implementations, one file per component:
+- [image_rate_limiter.py](/src/automod_components/image_rate_limiter.py): allows only X image messages within a window of Y messages, per channel.
+- [chain_prevention.py](/src/automod_components/chain_prevention.py): flags a media message (attachment, embed or sticker) that extends a reply chain of media messages past `max_chain_length`. Several replies to the same message are separate chains, and text messages break a chain. Media messages are forgotten after `duration` seconds. Members with an ignored role are never flagged but still count as chain links.
+
+The router that turns a saved config into the right component (`from_config`) lives in `BaseAutomodComponent` in [automod_models.py](/src/automod_models.py).
+
+NOTE: Before this layout, all components lived in a single `src/component_implementations.py`. That file has been removed; it's still in the git history if you need it. 
 
 # memory_manager_implementations.py
 

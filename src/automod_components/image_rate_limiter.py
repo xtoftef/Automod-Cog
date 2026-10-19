@@ -17,22 +17,7 @@ from src.automod_models import (
     BaseAutomodComponent,
     BaseChannelManager
 )
-
-def from_config(
-    config: BaseAutomodComponentConfig,
-    memory: BaseAutomodMemoryManager,
-    guild: Guild,
-) -> BaseAutomodComponent:
-    "Convenience method to route/create a config based on what has been implemented"
-    from src.component_implementations import ImageRateLimiterComponentConfig, ImageRateLimiterComponent
-
-    if isinstance(config, ImageRateLimiterComponentConfig):
-        return ImageRateLimiterComponent(guild, memory, config)
-
-    # TODO: Add more components to the if-elif ladders
-
-    raise TypeError(f"Unsupported config type: {type(config).__name__}")
-
+from utils import safe_format
 
 # ==============================================================================================
 # ATTACHMENT MESSAGE WINDOW LIMITER
@@ -48,7 +33,8 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
     DEFAULT_MSG_RESPONSE = ("<@{user_id}>, image limit reached! "
         "Maximum {max_images} images allowed within {window_size} messages.")
     CONFIG_KEY: ClassVar[str] = "image_rate_limiter_config"
-    
+    RESPONSE_PLACEHOLDERS: ClassVar[tuple[str, ...]] = ("user_id", "max_images", "window_size", "duration")
+
     max_images : int
     window_size : int # messages 
     duration : float
@@ -119,12 +105,16 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
         )
 
     def format_response(self, user_id: str) -> str:
-        return self.message_response_template.format_map({
-            "user_id": user_id,
-            "max_images": self.max_images,
-            "window_size": self.window_size,
-            "duration": self.duration,
-        })
+        return safe_format(
+            self.message_response_template,
+            {
+                "user_id": user_id,
+                "max_images": self.max_images,
+                "window_size": self.window_size,
+                "duration": self.duration,
+            },
+            ImageRateLimiterComponentConfig.DEFAULT_MSG_RESPONSE,
+        )
 
     def format_unique_config_display(self) -> str:
         return (f"**Max Images:** `{self.max_images}`\n"

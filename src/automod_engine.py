@@ -8,15 +8,16 @@ from src.automod_models import (
     BaseAutomodMemoryManager, 
     BaseAutomodComponent,
 )
-from src.component_implementations import (
-    ImageRateLimiterComponent
-)
+
+from src.automod_components.image_rate_limiter import ImageRateLimiterComponent
+from src.automod_components.chain_prevention import ChainPreventionComponent
 
 
 
 class AutomodEngine():
     AVAILABLE_COMPONENTS : tuple = (
         ImageRateLimiterComponent.CONFIG_KEY,
+        ChainPreventionComponent.CONFIG_KEY,
     )
 
     "Manager of all the automod components for all guilds"
@@ -90,12 +91,11 @@ class AutomodEngine():
             component = BaseAutomodComponent.from_config(config, self.memory, guild)
 
             # Then try to set the cache
-            self.cache[config.guild_id][component.CONFIG_KEY] = component
+            self.cache.setdefault(config.guild_id, {})[component.CONFIG_KEY] = component
 
             return True
         except Exception as e:
-            print(f"Ran into an unexpected exception: {e}") # NOTE: Ran into an exception when I tried to add a new config for a new guild. 
-            # Adding it to persistent memory was successful, it just maybe failed to initialize it somehow.
+            print(f"Ran into an unexpected exception: {e}")
             return False
 
 
