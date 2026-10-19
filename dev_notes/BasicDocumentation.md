@@ -167,7 +167,7 @@ This folder holds the automod implementations, one file per component:
 
 The router that turns a saved config into the right component (`from_config`) lives in `BaseAutomodComponent` in [automod_models.py](/src/automod_models.py).
 
-NOTE: [component_implementations.py](/src/component_implementations.py) is the old single-file version from before this layout. Nothing imports it anymore. 
+NOTE: Before this layout, all components lived in a single `src/component_implementations.py`. That file has been removed; it's still in the git history if you need it. 
 
 # memory_manager_implementations.py
 

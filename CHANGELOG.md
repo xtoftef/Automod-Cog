@@ -29,7 +29,8 @@ This merges the **Revised Automod Cog** with `main`. That combines `main`'s bot 
 - **New folder layout:** each automod component lives in its own file inside [`src/automod_components/`](src/automod_components/):
   - [`image_rate_limiter.py`](src/automod_components/image_rate_limiter.py)
   - [`chain_prevention.py`](src/automod_components/chain_prevention.py)
-- **The `from_config` router moved** to `BaseAutomodComponent.from_config` in [`src/automod_models.py`](src/automod_models.py). `src/component_implementations.py` is **no longer imported anywhere**.
+- **The `from_config` router moved** to `BaseAutomodComponent.from_config` in [`src/automod_models.py`](src/automod_models.py).
+- **`src/component_implementations.py` removed.** Its contents now live in `src/automod_components/` and `src/automod_models.py`, and the old file is still in the git history.
 - **`bot.py` reads a different token** depending on the `TEST` flag at the top of the file: `TEST_BOT_TOKEN` (when `TEST = True`) or `PRODUCTION_BOT_TOKEN`. It no longer uses `DISCORD_TOKEN`.
 - **Actions run independently:** `_handle_automod_response` runs each action on its own. A failing action (DMs closed, missing permission, member outranks the bot) is logged and the remaining actions still run. It returns the list of failed actions, and `/test-automod` now reports those failures instead of always saying "successful".
 - Docs ([`dev_notes/BasicDocumentation.md`](dev_notes/BasicDocumentation.md), the README and this changelog) updated for the new layout, the action system and the token variables.
@@ -52,7 +53,7 @@ All the limitations listed under 2026-10-19 still apply. In addition:
 
 - **`.env` is not loaded automatically.** `bot.py` only reads environment variables. Either configure your IDE's run configuration to load `.env` (PyCharm and VS Code both can) or add `python-dotenv`.
 - **`TimeoutAction` and `DMAction` are not used by any component yet.** They're only reachable through `/test-automod`.
-- **`from_config` contains two unreachable lines** after the final `raise`, referring to the old `component_implementations.from_config`. They're kept on purpose as a reference and have no effect.
+- **`from_config` contains two unreachable lines** after the final `raise`, referring to the old (now removed) `component_implementations.from_config`. They're kept on purpose as a reference and have no effect, but they would fail if ever moved above the `raise`.
 - **The `from __future__ import annotations` line was dropped from `DiscordUI/views.py`** in the merge. That's fine on Python 3.14 (the project target), but on 3.13 or older `views.py` fails to import.
 
 ---
