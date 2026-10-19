@@ -73,6 +73,7 @@ class MessageAction(BotAction):
 @dataclass
 class BaseAutomodComponentConfig(ABC):
     CONFIG_KEY: ClassVar[str] = ""
+    RESPONSE_PLACEHOLDERS: ClassVar[tuple[str, ...]] = ("user_id",) # placeholders usable in message_response_template
     guild_id : str # guild for which the config belongs
     is_global : bool # whether or not the automod affects all the channels of a guild
     affected_channels : OrderedSet # can include categories
@@ -164,7 +165,7 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         self.memory = memory
         self.channels: dict[str, ManagerT] = {}
         self.initialize_channel_helpers(guild)
-        if not self._config_key_matches:
+        if not self._config_key_matches():
             raise NotImplementedError((f"Config Key mismatch detected.\nComponent key: {self.CONFIG_KEY}"
                                        f"\nPassed Config key: {self.config.CONFIG_KEY}\nMake sure you implemented the automod component properly."))
 
@@ -172,19 +173,25 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         "Method used to check if the config key of the automod component matches that of the config"
         return self.CONFIG_KEY == self.config.CONFIG_KEY
 
+    def is_channel_watched(self, channel: GuildChannel) -> bool:
+        "Checks if the config covers a channel. A channel is also covered when its category is selected."
+        if not isinstance(channel, VALID_AUTOMOD_CHANNELS):
+            return False
+        channel_ids = {str(channel.id)}
+        if channel.category_id is not None:
+            channel_ids.add(str(channel.category_id))
+        if self.config.is_global:
+            return not (channel_ids & set(self.config.ignored_channels))
+        return bool(channel_ids & set(self.config.affected_channels))
+
+
     def initialize_channel_helpers(self, guild:Guild):
         "Synchronizes managers with the guild's eligible channels."
         affected_ids = set(self.config.affected_channels)
         ignored_ids = set(self.config.ignored_channels)
         for channel in guild.channels:
-            channel_id = str(channel.id)
-            if not isinstance(channel, VALID_AUTOMOD_CHANNELS):
-                continue
-            if self.config.is_global and channel_id in ignored_ids:
-                continue
-            if not self.config.is_global and channel_id not in affected_ids:
-                continue
-            self.add_manager(channel_id)
+            if self.is_channel_watched(channel):
+                self.add_manager(str(channel.id))
 
     async def update_config(self, new_config: ConfigT, guild: Guild) -> None:
         "Updates the config and refreshes the channel managers. Takes a guild parameter to get the latest setup of a guild"
@@ -218,6 +225,10 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
             return AutomodResponse(False, "Channel does not belong to the provided guild", None)
 
         channel_manager = self.get_manager(str(channel.id))
+        if channel_manager is None and self.is_channel_watched(channel):
+            # Channel was created (or moved into a watched category) after the managers were initialized
+            self.add_manager(str(channel.id))
+
         if channel_manager is None:
             return AutomodResponse(False, "Channel is not watched", None)
 
@@ -251,5 +262,17 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         memory: BaseAutomodMemoryManager,
         guild: Guild,
     ) -> BaseAutomodComponent:
-        from src.component_implementations import from_config
+        "Convenience method to route/create a config based on what has been implemented"
+        from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig, ImageRateLimiterComponent
+        from src.automod_components.chain_prevention import ChainPreventionComponentConfig, ChainPreventionComponent
+
+        if isinstance(config, ImageRateLimiterComponentConfig):
+            return ImageRateLimiterComponent(guild, memory, config)
+        elif isinstance(config, ChainPreventionComponentConfig):
+            return ChainPreventionComponent(guild, memory, config)
+
+        # TODO: Add more components to the if-elif ladders
+
+        raise TypeError(f"Unsupported config type: {type(config).__name__}")
+        from src.component_implementations import from_config # Former code, might keep it there in case i want to bring it back up under a new version
         return from_config(config, memory, guild)

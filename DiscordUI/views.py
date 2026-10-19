@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from .ui_utils import *
 from .modals import *
 from .buttons import *
-from src.component_implementations import BaseAutomodComponentConfig
+from src.automod_models import BaseAutomodComponentConfig
 
 if TYPE_CHECKING:
     from src.automod_engine import AutomodEngine

@@ -1,8 +1,11 @@
+from __future__ import annotations # Needed for the TYPE_CHECKING-only type hints on Python < 3.14
+
 __all__ = [
     "BaseConfigEditModal",
     "EditGeneralModal",
     "EditChannelsAndRolesModal",
     "EditImageRateLimiterSpecificModal",
+    "EditChainPreventionSpecificModal",
     "unique_modal_router"
 ]
 
@@ -14,17 +17,16 @@ from abc import ABC, abstractmethod
 
 import discord
 from discord.enums import ChannelType
-from src.component_implementations import (
-        BaseAutomodComponentConfig,
-        ImageRateLimiterComponentConfig
-    )
+from src.automod_models import BaseAutomodComponentConfig
+from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
+from src.automod_components.chain_prevention import ChainPreventionComponentConfig
 
 from .ui_utils import *
 
 if TYPE_CHECKING:
     # Clears out the type check flag while avoiding circular imports
     # NOTE: This can't be used for runtime events such as creating an object of the class or checking instance.
-    from views import AutomodComponentConfigPanelView
+    from .views import AutomodComponentConfigPanelView
     
 
 
@@ -54,7 +56,7 @@ class EditGeneralModal(BaseConfigEditModal):
         super().__init__(panel, title="Edit General")
         config = panel.draft_config
         
-        self.is_global_input = discord.ui.Checkbox(default=True)
+        self.is_global_input = discord.ui.Checkbox(default=config.is_global)
 
         self.response_template_input = discord.ui.TextInput(
             default=config.message_response_template,
@@ -73,7 +75,9 @@ class EditGeneralModal(BaseConfigEditModal):
         self.add_item(
             discord.ui.Label(
                 text="Response message",
-                description="Use {user_id}, {max_images}, and {window_size} placeholders as needed.",
+                description=("Placeholders: " + ", ".join(
+                    f"{{{placeholder}}}" for placeholder in config.RESPONSE_PLACEHOLDERS
+                ))[:100], # Discord's label description limit
                 component=self.response_template_input,
             )
         )
@@ -237,16 +241,73 @@ class EditImageRateLimiterSpecificModal(BaseComponentSpecificModal):
         await self.refresh_panel(interaction)
 
 
+# ----------------------------- Chain Prevention -----------------------------
+class EditChainPreventionSpecificModal(BaseComponentSpecificModal):
+    "Unique modal for modifying the settings that are unique to the chain prevention automod component"
+    @property
+    def draft_config(self) -> ChainPreventionComponentConfig:
+        return cast(ChainPreventionComponentConfig, self.panel.draft_config)
+
+    def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
+        super().__init__(panel, title="Edit Automod Sensitivity")
+        config : ChainPreventionComponentConfig = self.draft_config
+        self.max_chain_length_input = discord.ui.TextInput(
+            default=str(config.max_chain_length),
+            placeholder="Positive whole number",
+            required=True,
+            max_length=10,
+        )
+        self.duration_input = discord.ui.TextInput(
+            default=str(config.duration),
+            placeholder="Positive number of seconds",
+            required=True,
+            max_length=20,
+        )
+        for label, component in (
+            ("Maximum media messages per chain", self.max_chain_length_input),
+            ("Chain memory in seconds", self.duration_input),
+        ):
+            self.add_item(discord.ui.Label(text=label, component=component))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            max_chain_length = int(self.max_chain_length_input.value)
+            duration = float(self.duration_input.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "Enter a whole number for the maximum chain length "
+                "and a number for the chain memory.",
+                ephemeral=True,
+            )
+            return
+
+        if (
+            max_chain_length < 1
+            or not math.isfinite(duration)
+            or duration <= 0
+        ):
+            await interaction.response.send_message(
+                "All sensitivity values must be greater than zero.",
+                ephemeral=True,
+            )
+            return
+
+        self.draft_config.max_chain_length = max_chain_length
+        self.draft_config.duration = duration
+        await self.refresh_panel(interaction)
+
+
 def unique_modal_router(
     config: BaseAutomodComponentConfig,
 ) -> type[BaseConfigEditModal]:
     "Router function to return the specific config modal depending on the config type"
 
-    config_type = type(config)
-    match config_type:
-        case ImageRateLimiterComponentConfig:
+    # NOTE: Use class patterns (with parentheses). A bare name would be a capture pattern that matches anything.
+    match config:
+        case ImageRateLimiterComponentConfig():
             return EditImageRateLimiterSpecificModal
+        case ChainPreventionComponentConfig():
+            return EditChainPreventionSpecificModal
 
+    # Add your other cases above.
     raise ValueError("Unsupported Component Modal Class passed.")
-
-    # Add your other cases under here.

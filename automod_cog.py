@@ -5,16 +5,19 @@ from discord import app_commands
 from typing import cast, Literal
 from collections import deque
 import time
-from datetime  import datetime, timedelta
+from datetime import timedelta
 import discord
+
 
 from src.memory_manager_implementations import JSONMemoryManager
 from src.automod_engine import AutomodEngine
-from src.component_implementations import BaseAutomodMemoryManager, BaseAutomodComponentConfig, ImageRateLimiterComponentConfig
-from DiscordUI.views import AutomodComponentConfigPanelView
 from src.automod_models import (
+    BaseAutomodComponentConfig,BaseAutomodMemoryManager,
     DeleteAction, MessageAction, TimeoutAction, DMAction, AutomodResponse
 )
+from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
+from src.automod_components.chain_prevention import ChainPreventionComponentConfig
+from DiscordUI.views import AutomodComponentConfigPanelView
 
 # TODO: Note to self when i continue working on this. After some testing, i managed to solve quite a number of issues. Now the
 # config panel is working. It feels like the architecture is nearly there, I might be able to just refactor the code now.
@@ -27,7 +30,8 @@ from src.automod_models import (
 CONFIG_REGISTRY: dict[
     str, type[BaseAutomodComponentConfig]
 ] = {
-    ImageRateLimiterComponentConfig.CONFIG_KEY: ImageRateLimiterComponentConfig
+    ImageRateLimiterComponentConfig.CONFIG_KEY: ImageRateLimiterComponentConfig,
+    ChainPreventionComponentConfig.CONFIG_KEY: ChainPreventionComponentConfig
 }
 
 
@@ -54,7 +58,9 @@ class AutomodCog(commands.Cog):
 
         if response.flagged:
             await self._handle_automod_response(response, message)
-            
+        response = await self.automod_engine.engine_process_message(message)
+
+
 
     async def _handle_automod_response(self,response: AutomodResponse, message: discord.Message):
         "Handles an automod response regarding a particular message"
@@ -62,7 +68,13 @@ class AutomodCog(commands.Cog):
             if action.action_type == 'delete':
                 action = cast(DeleteAction, action)
                 # 1. Delete the triggering message
-                await message.delete()
+                try:
+                    await message.delete()
+                except discord.NotFound:
+                    pass # Already deleted by someone else
+                except discord.Forbidden:
+                    print(f"Missing 'Manage Messages' permission to delete a flagged message in channel {message.channel.id}")
+                    
             elif action.action_type == 'timeout':
                 action = cast(TimeoutAction, action)
                     
@@ -82,6 +94,7 @@ class AutomodCog(commands.Cog):
                 action = cast(DMAction, action)
 
                 await message.author.send(action.formatted_message_response)
+
 
     # ==============================================================================
     # AUTOCOMPLETES
@@ -277,4 +290,3 @@ class AutomodCog(commands.Cog):
             await interaction.response.send_message("Automod action successful")
         except Exception as e:
             await interaction.response.send_message(f"Automod action failed. Error: {e}")
-
