@@ -58,42 +58,48 @@ class AutomodCog(commands.Cog):
 
         if response.flagged:
             await self._handle_automod_response(response, message)
-        response = await self.automod_engine.engine_process_message(message)
 
 
 
-    async def _handle_automod_response(self,response: AutomodResponse, message: discord.Message):
-        "Handles an automod response regarding a particular message"
+    async def _handle_automod_response(self,response: AutomodResponse, message: discord.Message) -> list[str]:
+        """Handles an automod response regarding a particular message.
+        Each action runs independently, so one failing action (e.g. the user has DMs closed) doesn't stop the others.
+        Returns a list describing the actions that failed (empty if all succeeded)."""
+        failures: list[str] = []
         for action in (response.actions or []):
-            if action.action_type == 'delete':
-                action = cast(DeleteAction, action)
-                # 1. Delete the triggering message
-                try:
+            try:
+                if action.action_type == 'delete':
+                    action = cast(DeleteAction, action)
+                    # 1. Delete the triggering message
                     await message.delete()
-                except discord.NotFound:
-                    pass # Already deleted by someone else
-                except discord.Forbidden:
-                    print(f"Missing 'Manage Messages' permission to delete a flagged message in channel {message.channel.id}")
-                    
-            elif action.action_type == 'timeout':
-                action = cast(TimeoutAction, action)
-                    
-                exp_time = timedelta(minutes=action.duration)
 
-                if isinstance(message.author, discord.Member):
-                    await message.author.timeout(exp_time,reason=action.reason) 
+                elif action.action_type == 'timeout':
+                    action = cast(TimeoutAction, action)
 
-            elif action.action_type == 'message':
-                action = cast(MessageAction, action)
-                # 2. Send a temporary warning notice
-                warning = await message.channel.send(
-                    action.formatted_message_response,
-                    delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
-                )
-            elif action.action_type == 'dm':
-                action = cast(DMAction, action)
+                    exp_time = timedelta(minutes=action.duration)
 
-                await message.author.send(action.formatted_message_response)
+                    if isinstance(message.author, discord.Member):
+                        await message.author.timeout(exp_time,reason=action.reason)
+
+                elif action.action_type == 'message':
+                    action = cast(MessageAction, action)
+                    # 2. Send a temporary warning notice
+                    warning = await message.channel.send(
+                        action.formatted_message_response,
+                        delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
+                    )
+                elif action.action_type == 'dm':
+                    action = cast(DMAction, action)
+
+                    await message.author.send(action.formatted_message_response)
+
+            except discord.NotFound:
+                pass # Message or member is already gone (e.g. deleted by a moderator)
+            except discord.HTTPException as e: # Includes Forbidden: missing permissions, DMs closed, member outranks the bot...
+                failures.append(f"{action.action_type}: {e}")
+                print(f"Automod action '{action.action_type}' failed in channel {message.channel.id}: {e}")
+
+        return failures
 
 
     # ==============================================================================
@@ -243,6 +249,7 @@ class AutomodCog(commands.Cog):
         name = "dummy-config-view",
         description="Purely for testing"
     )
+    @app_commands.default_permissions(administrator=True)
     async def dummy_config(self, interaction:discord.Interaction):
         "Test command for a dummy."
         guild = interaction.guild
@@ -265,6 +272,7 @@ class AutomodCog(commands.Cog):
         )
 
     @app_commands.command(name= "test-automod")
+    @app_commands.default_permissions(administrator=True) # Can delete messages and time out members, so admins only
     async def test_automod_action(self, interaction: discord.Interaction, msg_id: str, action_type:Literal['delete', 'message', 'dm', 'timeout']):
 
         # Get message
@@ -286,7 +294,10 @@ class AutomodCog(commands.Cog):
         if not automod: return
 
         try:
-            await self._handle_automod_response(automod, msg)
-            await interaction.response.send_message("Automod action successful")
+            failures = await self._handle_automod_response(automod, msg)
+            if failures:
+                await interaction.response.send_message(f"Automod action failed. Error: {'; '.join(failures)}")
+            else:
+                await interaction.response.send_message("Automod action successful")
         except Exception as e:
             await interaction.response.send_message(f"Automod action failed. Error: {e}")

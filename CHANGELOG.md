@@ -6,11 +6,64 @@ The project targets **Python 3.14** and **discord.py 2.7+**.
 
 ---
 
-## 2026-10-19 — Chain prevention + bug fixes
+## 2026-10-20 — Revised merge (branch `revised-merge`)
+
+This merges the **Revised Automod Cog** with `main`. That combines `main`'s bot action system with the chain prevention automod and the bug fixes from the 2026-10-19 update (below), and fixes the problems the merge introduced.
 
 ### Added
 
-- **Chain prevention automod** (`chain_prevention_config`) in its own file: [`src/chain_prevention.py`](src/chain_prevention.py).
+- **Bot action system** (from `main`). An `AutomodResponse` is now `(flagged, reason, actions)`. A component no longer returns only a message: it returns the list of actions the bot should take.
+
+  | Action | What the bot does |
+  |---|---|
+  | `DeleteAction()` | Deletes the flagged message |
+  | `MessageAction(text)` | Posts `text` in the channel. It is deleted after 5 seconds. |
+  | `DMAction(text)` | Sends `text` to the member in DMs |
+  | `TimeoutAction(minutes, reason)` | Times the member out. `reason` appears in the audit log. |
+
+  Both automods currently return `[DeleteAction(), MessageAction(<response template>)]` when they flag a message.
+- **`/test-automod <msg_id> <action_type>`** (from `main`): runs a single action on a message, to test that the bot has the permissions it needs.
+
+### Changed
+
+- **New folder layout:** each automod component lives in its own file inside [`src/automod_components/`](src/automod_components/):
+  - [`image_rate_limiter.py`](src/automod_components/image_rate_limiter.py)
+  - [`chain_prevention.py`](src/automod_components/chain_prevention.py)
+- **The `from_config` router moved** to `BaseAutomodComponent.from_config` in [`src/automod_models.py`](src/automod_models.py). `src/component_implementations.py` is **no longer imported anywhere**.
+- **`bot.py` reads a different token** depending on the `TEST` flag at the top of the file: `TEST_BOT_TOKEN` (when `TEST = True`) or `PRODUCTION_BOT_TOKEN`. It no longer uses `DISCORD_TOKEN`.
+- **Actions run independently:** `_handle_automod_response` runs each action on its own. A failing action (DMs closed, missing permission, member outranks the bot) is logged and the remaining actions still run. It returns the list of failed actions, and `/test-automod` now reports those failures instead of always saying "successful".
+- Docs ([`dev_notes/BasicDocumentation.md`](dev_notes/BasicDocumentation.md), the README and this changelog) updated for the new layout, the action system and the token variables.
+
+### Fixed
+
+| # | Where | Bug | Effect |
+|---|---|---|---|
+| 16 | `automod_cog.py` → `on_message` | The merge left a second `engine_process_message(message)` call at the end of `on_message`. | **Every message went through every automod twice.** The image rate limiter counted each image twice, so it flagged at half the configured limit. |
+| 17 | `src/automod_models.py` → `process_message` | The merge dropped the line that re-reads `channel_manager` after creating one for a new channel. | A channel created after startup still got "Channel is not watched" for its first message, so the bug #7 fix only half worked. |
+| 18 | `automod_cog.py` → `test-automod`, `dummy-config-view` | The test commands had no permission restriction. | **Any member** could make the bot delete messages or time out other members for 60 minutes with `/test-automod`. Both test commands are now admin-only, like the config commands. |
+| 19 | `automod_cog.py` → `_handle_automod_response` | Only the delete action handled errors. | A member with DMs closed, or one the bot can't time out, raised an error that stopped the remaining actions from running. |
+| 20 | `DiscordUI/views.py` | Bug #13 came back in the merge: the reference to the nonexistent `DummyAutomodEngine`. | Dead code that would raise `NameError`. Removed again. |
+| 21 | `README.md` | The merge restored the broken `dev_notes/BasicDocumentation` link (missing `.md`) and lost the changelog link. | Broken link on GitHub. |
+| — | `src/automod_models.py` → `initialize_channel_helpers` | Two unused variables were left over from the merge. | No effect. Cleaned up. |
+
+### Known limitations (not changed in this update)
+
+All the limitations listed under 2026-10-19 still apply. In addition:
+
+- **`.env` is not loaded automatically.** `bot.py` only reads environment variables. Either configure your IDE's run configuration to load `.env` (PyCharm and VS Code both can) or add `python-dotenv`.
+- **`TimeoutAction` and `DMAction` are not used by any component yet.** They're only reachable through `/test-automod`.
+- **`from_config` contains two unreachable lines** after the final `raise`, referring to the old `component_implementations.from_config`. They're kept on purpose as a reference and have no effect.
+- **The `from __future__ import annotations` line was dropped from `DiscordUI/views.py`** in the merge. That's fine on Python 3.14 (the project target), but on 3.13 or older `views.py` fails to import.
+
+---
+
+## 2026-10-19 — Chain prevention + bug fixes
+
+> Paths in this entry are as they were at the time. Since the 2026-10-20 merge, the components live in `src/automod_components/` and `from_config` lives in `src/automod_models.py`.
+
+### Added
+
+- **Chain prevention automod** (`chain_prevention_config`) in its own file, now [`src/automod_components/chain_prevention.py`](src/automod_components/chain_prevention.py).
   - Flags a media message (attachment, embed or sticker) when it extends a **linear reply chain** of media messages past `max_chain_length`.
   - `M1 <- M2 <- M3 <- M4` (each replying to the previous one) with a limit of 3 → **M4 is deleted**.
   - `M2`, `M3`, `M4` all replying to `M1` → separate chains, **nothing is flagged**.
@@ -19,31 +72,30 @@ The project targets **Python 3.14** and **discord.py 2.7+**.
   - Media messages are forgotten after `duration` seconds.
   - Settings: `max_chain_length` (default `3`) and `duration` (default `600` seconds), editable with `/config-add` and `/config-update`.
   - Response placeholders: `{user_id}`, `{max_chain_length}`, `{duration}`.
-- ~~`EditChainPreventionSpecificModal` in [`DiscordUI/modals.py`](DiscordUI/modals.py) to edit those settings.~~
-- ~~`safe_format()` in [`utils.py`](utils.py): formats an admin-provided response template and falls back to the default template if it is invalid.~~
-- ~~`RESPONSE_PLACEHOLDERS` class variable on `BaseAutomodComponentConfig`. Each config lists its placeholders, and the "Edit General" modal shows the right ones for each component.~~
-- ~~`BaseAutomodComponent.is_channel_watched()`: the single place that decides whether a channel is covered by a config. It also accounts for categories.~~
-- ~~`OrderedSet.__eq__`, so two configs can be compared with `==`.~~
+- `EditChainPreventionSpecificModal` in [`DiscordUI/modals.py`](DiscordUI/modals.py) to edit those settings.
+- `safe_format()` in [`utils.py`](utils.py): formats an admin-provided response template and falls back to the default template if it is invalid.
+- `RESPONSE_PLACEHOLDERS` class variable on `BaseAutomodComponentConfig`. Each config lists its placeholders, and the "Edit General" modal shows the right ones for each component.
+- `BaseAutomodComponent.is_channel_watched()`: the single place that decides whether a channel is covered by a config. It also accounts for categories.
+- `OrderedSet.__eq__`, so two configs can be compared with `==`.
 - This changelog.
 
 ### Changed
 
-- ~~Components can now live in their own file inside `src/` instead of all going into `component_implementations.py`. `from_config` in `component_implementations.py` is still the single router for every component.~~
-- ~~`unique_modal_router` now uses class patterns (`case SomeConfig():`) instead of bare names.~~
-- ~~`ImageRateLimiterComponentConfig.format_response` now uses `safe_format`.~~
-- ~~`JSONMemoryManager.save_memory` writes to `<file>.tmp` first and then swaps it in.~~
-- ~~`JSONMemoryManager.sync_get_all_guild_configs` skips a broken or unknown entry (and prints it) instead of raising. The entry stays in the JSON file untouched.~~
+- Components can live in their own file instead of all going into `component_implementations.py`.
+- `unique_modal_router` now uses class patterns (`case SomeConfig():`) instead of bare names.
+- `ImageRateLimiterComponentConfig.format_response` now uses `safe_format`.
+- `JSONMemoryManager.save_memory` writes to `<file>.tmp` first and then swaps it in.
+- `JSONMemoryManager.sync_get_all_guild_configs` skips a broken or unknown entry (and prints it) instead of raising. The entry stays in the JSON file untouched.
 - `.gitignore` now also ignores `guild_data.json.tmp`, `dummy_memory.json` and `dummy_memory.json.tmp`.
-- [`dev_notes/BasicDocumentation.md`](dev_notes/BasicDocumentation.md) updated with the new file, the `CONFIG_REGISTRY` step and the match-case warning. Line-number links that had gone out of date were removed.
 
 ### Fixed — bugs that existed before this update
 
-| # | Where | Bug | Effect | 
+| # | Where | Bug | Effect |
 |---|---|---|---|
-| 1 | `src/automod_engine.py` → `set_config` | Wrote to `self.cache[guild_id][...]` without creating the guild's entry first. The `KeyError` was swallowed and `False` returned. | `/config-add` silently failed on any server that had no automod yet, which is every new server. | added
+| 1 | `src/automod_engine.py` → `set_config` | Wrote to `self.cache[guild_id][...]` without creating the guild's entry first. The `KeyError` was swallowed and `False` returned. | `/config-add` silently failed on any server that had no automod yet, which is every new server. |
 | 2 | `DiscordUI/buttons.py` → `SaveDummyConfigButton` | Ignored the return value of `set_config`. | The panel showed "✅ Saved" even when saving failed (for example, bug #1). It now shows an error and stays open so the admin can retry. |
-| 3 | `src/automod_models.py` → `BaseAutomodComponent.__init__` | `if not self._config_key_matches:` was missing `()`. A method object is always truthy. | The config/component key mismatch check **never ran**. | done
-| 4 | `DiscordUI/modals.py` → `EditGeneralModal` | The "global" checkbox was created with `default=True` instead of the current value. | Opening "Edit General" on a non-global config and pressing submit quietly turned it back into a global one. | done
+| 3 | `src/automod_models.py` → `BaseAutomodComponent.__init__` | `if not self._config_key_matches:` was missing `()`. A method object is always truthy. | The config/component key mismatch check **never ran**. |
+| 4 | `DiscordUI/modals.py` → `EditGeneralModal` | The "global" checkbox was created with `default=True` instead of the current value. | Opening "Edit General" on a non-global config and pressing submit quietly turned it back into a global one. |
 | 5 | `format_response` (all components) | `str.format_map` on an admin-written template raised on unknown placeholders like `{oops}` or a stray `{`. | The exception happened before the message was deleted, so a bad template **disabled the automod** for that server. |
 | 6 | `src/automod_models.py` → `initialize_channel_helpers` | Only a channel's own ID was checked, never its category. | The channel picker allows categories, but selecting one (as affected or ignored) did nothing. |
 | 7 | `src/automod_models.py` → `process_message` | Channel managers were only created at startup or on config update. | Channels created after the bot started were **not watched** until someone re-saved the config. They are now picked up on their first message. |
@@ -55,8 +107,6 @@ The project targets **Python 3.14** and **discord.py 2.7+**.
 | 13 | `DiscordUI/views.py` | Referenced a `DummyAutomodEngine` class that does not exist. | Would raise a `NameError` if the panel were ever opened without an engine. The dead code was removed. |
 | 14 | `DiscordUI/modals.py` | The `TYPE_CHECKING` import used `from views import ...` instead of `from .views import ...`. | Type checkers (PyCharm, Pylance, mypy) couldn't resolve the panel type. |
 | 15 | `utils.py` → `OrderedSet` | No `__eq__`. | Two identical configs compared as **not equal**, which would break any future "has anything changed?" check. |
-
-> **Compatibility note:** `from __future__ import annotations` was added to `DiscordUI/modals.py`, `views.py` and `buttons.py`. On Python 3.14 it changes nothing. On Python 3.13 and older, those files would otherwise fail to import because of their `TYPE_CHECKING`-only type hints.
 
 ### Known limitations (not changed in this update)
 
@@ -72,17 +122,17 @@ The project targets **Python 3.14** and **discord.py 2.7+**.
 
 The engine and the cog are built so that a new automod doesn't need changes to their logic. You write one file, then register it in a few places.
 
-Use [`src/chain_prevention.py`](src/chain_prevention.py) as the reference: it is a complete, self-contained example.
+Use [`src/automod_components/chain_prevention.py`](src/automod_components/chain_prevention.py) as the reference: it is a complete, self-contained example.
 
 ### Step 1 — Create the component file
 
-Create `src/<your_feature>.py` with three classes:
+Create `src/automod_components/<your_feature>.py` with three classes:
 
 | Class | Inherits from | Responsibility |
 |---|---|---|
 | `YourFeatureComponentConfig` | `BaseAutomodComponentConfig` | Holds the settings (a dataclass). Saved to and loaded from JSON. |
 | `YourFeatureChannelManager` | `BaseChannelManager` | The actual detection logic and state for **one channel**. |
-| `YourFeatureComponent` | `BaseAutomodComponent[Manager, Config]` | Creates a manager per channel and turns its verdict into an `AutomodResponse`. |
+| `YourFeatureComponent` | `BaseAutomodComponent[Manager, Config]` | Creates a manager per channel and turns its verdict into an `AutomodResponse` with the actions to take. |
 
 Skeleton:
 
@@ -94,6 +144,8 @@ from discord import Guild, Message, Member
 
 from src.automod_models import (
     AutomodResponse,
+    DeleteAction,
+    MessageAction,
     OrderedSet,
     BaseAutomodComponentConfig,
     BaseAutomodMemoryManager,
@@ -157,13 +209,22 @@ class YourFeatureComponent(
     async def _process_valid_message(self, channel_manager: YourFeatureChannelManager,
                                      user: Member, message: Message, is_immune: bool) -> AutomodResponse:
         if is_immune:
-            return AutomodResponse(False, "User has an immunity role")
+            return AutomodResponse(False, "User has an immunity role", None)
         if channel_manager.process_message(...):
-            return AutomodResponse(True, self.config.format_response(str(user.id)))
-        return AutomodResponse(False, "User did not trigger the automod")
+            return AutomodResponse(
+                True,
+                "Short reason, used for logs",
+                [
+                    DeleteAction(),
+                    MessageAction(self.config.format_response(str(user.id)))
+                ]
+            )
+        return AutomodResponse(False, "User did not trigger the automod", None)
 ```
 
 The shared settings (global mode, affected/ignored channels and categories, ignored roles, response message) and the shared checks (correct guild, watched channel, real member, immunity) are handled by the base classes. You don't write them again.
+
+**Choosing actions:** return whichever actions fit your automod, in the order they should run: `DeleteAction()`, `MessageAction(text)`, `DMAction(text)`, `TimeoutAction(minutes, reason)`. Each one runs on its own, so a failed DM won't stop the delete. If you need a **new kind** of action, add a `BotAction` subclass in `src/automod_models.py` and handle its `action_type` in `_handle_automod_response` in `automod_cog.py`.
 
 ### Step 2 — Create the settings modal
 
@@ -173,7 +234,7 @@ In [`DiscordUI/modals.py`](DiscordUI/modals.py), add a `BaseComponentSpecificMod
 
 | # | File | What to add |
 |---|---|---|
-| 1 | `src/component_implementations.py` → `from_config` | Import your config and component **inside the function** (to avoid circular imports) and add an `elif isinstance(config, YourFeatureComponentConfig): return YourFeatureComponent(guild, memory, config)` |
+| 1 | `src/automod_models.py` → `BaseAutomodComponent.from_config` | Import your config and component **inside the method** (to avoid circular imports) and add an `elif isinstance(config, YourFeatureComponentConfig): return YourFeatureComponent(guild, memory, config)` **before** the final `raise`. |
 | 2 | `src/automod_engine.py` → `AVAILABLE_COMPONENTS` | `YourFeatureComponent.CONFIG_KEY` (and the import at the top) |
 | 3 | `src/memory_manager_implementations.py` → `CONFIG_MAP` | `YourFeatureComponentConfig.CONFIG_KEY : YourFeatureComponentConfig` |
 | 4 | `automod_cog.py` → `CONFIG_REGISTRY` | `YourFeatureComponentConfig.CONFIG_KEY: YourFeatureComponentConfig`. Without it, `/config-add` rejects your component. |
@@ -182,12 +243,13 @@ In [`DiscordUI/modals.py`](DiscordUI/modals.py), add a `BaseComponentSpecificMod
 
 ### Step 4 — Test it
 
-1. Run `bot.py` with `DISCORD_TOKEN` in your `.env`.
+1. Set `TEST = True` in `bot.py` and make `TEST_BOT_TOKEN` available to the process (environment variable, or a `.env` loaded by your IDE run configuration). Then run `bot.py`.
 2. `/config-add` → pick your component → adjust the settings → **Save**.
 3. Check that `guild_data.json` now has your `CONFIG_KEY` under the server's ID.
 4. Trigger the automod in a watched channel. Then confirm that a member with an ignored role and an ignored channel are left alone.
-5. Restart the bot and check that the automod is still active (it was reloaded from the JSON file).
-6. Add an entry for your feature at the top of this changelog.
+5. Use `/test-automod` to check the bot has the permissions each of your actions needs.
+6. Restart the bot and check that the automod is still active (it was reloaded from the JSON file).
+7. Add an entry for your feature at the top of this changelog.
 
 ### Rules that prevent future breakage
 
@@ -196,3 +258,5 @@ In [`DiscordUI/modals.py`](DiscordUI/modals.py), add a `BaseComponentSpecificMod
 - **Make `from_dict` tolerate missing optional fields** (use `.get(key, default)`) when you add a new setting to an existing component. Older saved configs won't have it.
 - **Keep detection logic inside the channel manager** and keep the component thin. The manager should not care where the message came from.
 - **Return `bool` from `set_config`-style operations and check it in the UI.** Don't report success you didn't verify (bug #2).
+- **Commands that can delete messages or punish members must be admin-only** (`@app_commands.default_permissions(administrator=True)`), including test commands (bug #18).
+- **When merging by hand, diff the result against both sides.** Bugs #16, #17, #20 and #21 were all introduced or reintroduced by a manual merge.

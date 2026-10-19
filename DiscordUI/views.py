@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class AutomodComponentConfigPanelView(discord.ui.LayoutView):
-    """Components V2 config panel backed only by DummyAutomodEngine."""
+    """Components V2 config panel used to edit an automod component's config and save it through the engine."""
 
     def __init__(
         self,
@@ -24,8 +24,6 @@ class AutomodComponentConfigPanelView(discord.ui.LayoutView):
     ) -> None:
         
         super().__init__(timeout=300)
-        if not engine: 
-            engine = DummyAutomodEngine(config)
         self.draft_config = deepcopy(config)
         self.engine = engine
         self.author_id = author_id

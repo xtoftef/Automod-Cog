@@ -187,8 +187,6 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
 
     def initialize_channel_helpers(self, guild:Guild):
         "Synchronizes managers with the guild's eligible channels."
-        affected_ids = set(self.config.affected_channels)
-        ignored_ids = set(self.config.ignored_channels)
         for channel in guild.channels:
             if self.is_channel_watched(channel):
                 self.add_manager(str(channel.id))
@@ -228,6 +226,7 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         if channel_manager is None and self.is_channel_watched(channel):
             # Channel was created (or moved into a watched category) after the managers were initialized
             self.add_manager(str(channel.id))
+            channel_manager = self.get_manager(str(channel.id))
 
         if channel_manager is None:
             return AutomodResponse(False, "Channel is not watched", None)
