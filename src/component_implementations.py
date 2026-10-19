@@ -7,6 +7,10 @@ import time
 
 from src.automod_models import (
     AutomodResponse,
+    DeleteAction,
+    TimeoutAction,
+    DMAction,
+    MessageAction,
     OrderedSet,
     BaseAutomodComponentConfig,
     BaseAutomodMemoryManager, 
@@ -219,7 +223,7 @@ class ImageRateLimiterComponent(
 
         # Check if msg trips the automod
         if is_immune:
-            return AutomodResponse(False, "User has an immunity role")
+            return AutomodResponse(False, "User has an immunity role", None)
 
         has_triggered = channel_manager.process_message(has_image)
 
@@ -227,13 +231,18 @@ class ImageRateLimiterComponent(
         if has_triggered:
             return AutomodResponse(
                 True,
-                self.config.format_response(str(user.id))
+                "Maximum number of images exceeded",
+                [
+                    DeleteAction(),
+                    MessageAction(self.config.format_response(str(user.id)))
+                ]
             )
 
         # Normal msg that doesn't trigger the automod
         else:
             return AutomodResponse(
                 False,
-                "User did not trigger the automod"
+                "User did not trigger the automod",
+                None
             )
 

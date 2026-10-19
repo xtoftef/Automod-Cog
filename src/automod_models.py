@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
-from typing import ClassVar, TypeVar, Generic, Type, Self, Any
+from typing import ClassVar, TypeVar, Generic, Type, Self, Any, Literal, LiteralString
 
 from discord.abc import GuildChannel
 from discord import Guild, Message, Member
@@ -20,7 +20,55 @@ GUILD_CHANNELS = (VoiceChannel, StageChannel, ForumChannel, CategoryChannel, Tex
 class AutomodResponse:
     "Response returned to the Discord bot"
     flagged : bool # True if the message flagged the automod, False if not
-    formatted_message_response : str # Formatted message that the discord bot will output
+    reason : str
+    actions : list[BotAction] | None # Actions that the bot should perform regarding the flagged message/user
+    
+
+@dataclass
+class BotAction:
+      # Should be a string literal
+    @property
+    @abstractmethod
+    def action_type(self) -> Literal['delete', 'timeout', 'dm', 'message']:
+        pass
+
+
+@dataclass
+class DeleteAction(BotAction):
+    @property
+    def action_type(self): return 'delete'
+    
+
+
+@dataclass
+class TimeoutAction(BotAction):
+    """Sets a member's timeout
+    Parameters:
+        duration (int) : Time in minutes for how long the timeout lasts
+        reason (str) : The reason shown in the audit log
+    """
+    duration: int
+    reason: str
+
+    @property
+    def action_type(self): return 'timeout'
+
+
+@dataclass
+class DMAction(BotAction):
+    formatted_message_response: str
+
+    @property
+    def action_type(self): return 'dm'
+
+
+@dataclass
+class MessageAction(BotAction):
+    """Sends a message in the channel triggered"""
+    formatted_message_response: str
+
+    @property
+    def action_type(self): return 'message'
 
 @dataclass
 class BaseAutomodComponentConfig(ABC):
@@ -167,15 +215,15 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
     async def process_message(self, guild: Guild, channel: GuildChannel, message: Message) -> AutomodResponse:
         "Runs shared validity checks before dispatching to the component-specific handler."
         if str(channel.guild.id) != str(guild.id):
-            return AutomodResponse(False, "Channel does not belong to the provided guild")
+            return AutomodResponse(False, "Channel does not belong to the provided guild", None)
 
         channel_manager = self.get_manager(str(channel.id))
         if channel_manager is None:
-            return AutomodResponse(False, "Channel is not watched")
+            return AutomodResponse(False, "Channel is not watched", None)
 
         user = message.author
         if not isinstance(user, Member):
-            return AutomodResponse(False, "Message was not sent in a guild...")
+            return AutomodResponse(False, "Message was not sent in a guild...", None)
 
         is_immune = self.check_for_immunity(user)
 

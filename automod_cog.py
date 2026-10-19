@@ -2,15 +2,19 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from typing import cast, Literal
 from collections import deque
 import time
+from datetime  import datetime, timedelta
 import discord
-
 
 from src.memory_manager_implementations import JSONMemoryManager
 from src.automod_engine import AutomodEngine
 from src.component_implementations import BaseAutomodMemoryManager, BaseAutomodComponentConfig, ImageRateLimiterComponentConfig
 from DiscordUI.views import AutomodComponentConfigPanelView
+from src.automod_models import (
+    DeleteAction, MessageAction, TimeoutAction, DMAction, AutomodResponse
+)
 
 # TODO: Note to self when i continue working on this. After some testing, i managed to solve quite a number of issues. Now the
 # config panel is working. It feels like the architecture is nearly there, I might be able to just refactor the code now.
@@ -44,18 +48,40 @@ class AutomodCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         "Handles the messages that the bot receives."
+        if not isinstance(message.author, discord.Member):
+            return
         response = await self.automod_engine.engine_process_message(message)
 
         if response.flagged:
-            # 1. Delete the triggering message
-            await message.delete()
+            await self._handle_automod_response(response, message)
+            
 
-            # 2. Send a temporary warning notice
-            warning = await message.channel.send(
-                response.formatted_message_response,
-                delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
-            )
+    async def _handle_automod_response(self,response: AutomodResponse, message: discord.Message):
+        "Handles an automod response regarding a particular message"
+        for action in (response.actions or []):
+            if action.action_type == 'delete':
+                action = cast(DeleteAction, action)
+                # 1. Delete the triggering message
+                await message.delete()
+            elif action.action_type == 'timeout':
+                action = cast(TimeoutAction, action)
+                    
+                exp_time = timedelta(minutes=action.duration)
 
+                if isinstance(message.author, discord.Member):
+                    await message.author.timeout(exp_time,reason=action.reason) 
+
+            elif action.action_type == 'message':
+                action = cast(MessageAction, action)
+                # 2. Send a temporary warning notice
+                warning = await message.channel.send(
+                    action.formatted_message_response,
+                    delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
+                )
+            elif action.action_type == 'dm':
+                action = cast(DMAction, action)
+
+                await message.author.send(action.formatted_message_response)
 
     # ==============================================================================
     # AUTOCOMPLETES
@@ -224,3 +250,31 @@ class AutomodCog(commands.Cog):
             ),
             ephemeral=True,
         )
+
+    @app_commands.command(name= "test-automod")
+    async def test_automod_action(self, interaction: discord.Interaction, msg_id: str, action_type:Literal['delete', 'message', 'dm', 'timeout']):
+
+        # Get message
+        if not interaction.channel or isinstance(interaction.channel, (discord.ForumChannel,discord.CategoryChannel)): return
+
+        msg = await interaction.channel.fetch_message(int(msg_id))
+
+        automod = None
+        match action_type:
+            case 'delete':
+                automod = AutomodResponse(False, "", [DeleteAction()])
+            case 'dm':
+                automod = AutomodResponse(False, "", [DMAction("Hi")])
+            case 'message':
+                automod = AutomodResponse(False, "", [MessageAction("Hi")])
+            case 'timeout':
+                automod = AutomodResponse(False, "", [TimeoutAction(60,"Mute test")])
+
+        if not automod: return
+
+        try:
+            await self._handle_automod_response(automod, msg)
+            await interaction.response.send_message("Automod action successful")
+        except Exception as e:
+            await interaction.response.send_message(f"Automod action failed. Error: {e}")
+

@@ -9,8 +9,13 @@ import logging.handlers
 
 from automod_cog import AutomodCog
 
+TEST = True
+
 # Configuration
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", None)
+if TEST:
+    DISCORD_TOKEN = os.getenv("TEST_BOT_TOKEN", None)
+else:
+    DISCORD_TOKEN = os.getenv("PRODUCTION_BOT_TOKEN", None)
 
 
 if not DISCORD_TOKEN:

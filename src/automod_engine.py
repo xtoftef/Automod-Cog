@@ -51,11 +51,11 @@ class AutomodEngine():
         Returns the first positive flag response"""
 
         guild = message.guild
-        if not guild: return AutomodResponse(False, "Message was not received from guild")
-        if not isinstance(message.channel, discord.abc.GuildChannel): return AutomodResponse(False, "Invalid channel")
+        if not guild: return AutomodResponse(False, "Message was not received from guild", None)
+        if not isinstance(message.channel, discord.abc.GuildChannel): return AutomodResponse(False, "Invalid channel", None)
 
         automod_component_dict = self.cache.get(str(guild.id), None)
-        if not automod_component_dict: return AutomodResponse(False, "Guild has no automod component running...")
+        if not automod_component_dict: return AutomodResponse(False, "Guild has no automod component running...", None)
 
 
         for _, component in automod_component_dict.items():
@@ -63,7 +63,7 @@ class AutomodEngine():
             if response.flagged:
                 return response
 
-        return AutomodResponse(False, "No automod component was triggered")
+        return AutomodResponse(False, "No automod component was triggered", None)
 
 
     async def get_guild_components(self, guild_id: str) -> dict[str,BaseAutomodComponent]:
@@ -94,7 +94,8 @@ class AutomodEngine():
 
             return True
         except Exception as e:
-            print(f"Ran into an unexpected exception: {e}")
+            print(f"Ran into an unexpected exception: {e}") # NOTE: Ran into an exception when I tried to add a new config for a new guild. 
+            # Adding it to persistent memory was successful, it just maybe failed to initialize it somehow.
             return False
 
 
