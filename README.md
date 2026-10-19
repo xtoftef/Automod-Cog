@@ -1,6 +1,8 @@
 # Automod Cog - [discord.py]
 A simple discord.py Cog implementation to perform some specific automod tasks
 
+Check the [Basic Documentation](dev_notes/BasicDocumentation). It's a must for getting the latest info about the current state of the cog.
+
 ## Introduction
 
 Moderation bots like Dyno, Carl and Wick have some very useful automod implementations. However, they do not always have all the things that a server needs. For example, in a particular server I am in, we see embeds and attachments often be used more than what usually is acceptable and there is a difficulty for server staff to control that usage consistently and without bias. 
