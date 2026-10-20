@@ -52,11 +52,11 @@ class AutomodEngine():
         Returns the first positive flag response"""
 
         guild = message.guild
-        if not guild: return AutomodResponse(False, "Message was not received from guild", None)
-        if not isinstance(message.channel, discord.abc.GuildChannel): return AutomodResponse(False, "Invalid channel", None)
+        if not guild: return AutomodResponse(False, "Message was not received from guild", None, None)
+        if not isinstance(message.channel, discord.abc.GuildChannel): return AutomodResponse(False, "Invalid channel", None, None)
 
         automod_component_dict = self.cache.get(str(guild.id), None)
-        if not automod_component_dict: return AutomodResponse(False, "Guild has no automod component running...", None)
+        if not automod_component_dict: return AutomodResponse(False, "Guild has no automod component running...", None, None)
 
 
         for _, component in automod_component_dict.items():
@@ -64,7 +64,7 @@ class AutomodEngine():
             if response.flagged:
                 return response
 
-        return AutomodResponse(False, "No automod component was triggered", None)
+        return AutomodResponse(False, "No automod component was triggered", None, None)
 
 
     async def get_guild_components(self, guild_id: str) -> dict[str,BaseAutomodComponent]:

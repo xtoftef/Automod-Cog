@@ -47,6 +47,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             is_global= True,
             affected_channels= OrderedSet(),
             ignored_channels= OrderedSet(),
+            logging_channel = None,
             ignored_roles= OrderedSet(),
             max_images= 3,
             window_size= 10,
@@ -61,6 +62,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             "is_global": self.is_global,
             "affected_channels": list(self.affected_channels),
             "ignored_channels": list(self.ignored_channels),
+            "logging_channels" : self.logging_channel,
             "ignored_roles": list(self.ignored_roles),
             "message_response_template": self.message_response_template,
             "max_images": self.max_images,
@@ -78,6 +80,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             "is_global",
             "affected_channels",
             "ignored_channels",
+            "logging_channel",
             "ignored_roles",
             "max_images",
             "window_size",
@@ -92,6 +95,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             is_global=bool(config_dict["is_global"]),
             affected_channels=OrderedSet(config_dict.get("affected_channels", [])),
             ignored_channels=OrderedSet(config_dict.get("ignored_channels", [])),
+            logging_channel = config_dict.get("logging_channel", None),
             ignored_roles=OrderedSet(config_dict.get("ignored_roles", [])),
             max_images=int(config_dict["max_images"]),
             window_size=int(config_dict["window_size"]),
@@ -213,7 +217,7 @@ class ImageRateLimiterComponent(
 
         # Check if msg trips the automod
         if is_immune:
-            return AutomodResponse(False, "User has an immunity role", None)
+            return AutomodResponse(False, "User has an immunity role", None, None)
 
         has_triggered = channel_manager.process_message(has_image)
 
@@ -225,7 +229,8 @@ class ImageRateLimiterComponent(
                 [
                     DeleteAction(),
                     MessageAction(self.config.format_response(str(user.id)))
-                ]
+                ],
+                self.config.logging_channel
             )
 
         # Normal msg that doesn't trigger the automod
@@ -233,6 +238,7 @@ class ImageRateLimiterComponent(
             return AutomodResponse(
                 False,
                 "User did not trigger the automod",
+                None,
                 None
             )
 

@@ -49,6 +49,7 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
             is_global= True,
             affected_channels= OrderedSet(),
             ignored_channels= OrderedSet(),
+            logging_channel = None,
             ignored_roles= OrderedSet(),
             max_chain_length= 3,
             duration= 600,
@@ -62,6 +63,7 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
             "affected_channels": list(self.affected_channels),
             "ignored_channels": list(self.ignored_channels),
             "ignored_roles": list(self.ignored_roles),
+            "logging_channel" : self.logging_channel,
             "message_response_template": self.message_response_template,
             "max_chain_length": self.max_chain_length,
             "duration": self.duration,
@@ -77,6 +79,7 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
             "is_global",
             "affected_channels",
             "ignored_channels",
+            "logging_channel",
             "ignored_roles",
             "max_chain_length",
             "duration",
@@ -90,6 +93,7 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
             is_global=bool(config_dict["is_global"]),
             affected_channels=OrderedSet(config_dict.get("affected_channels", [])),
             ignored_channels=OrderedSet(config_dict.get("ignored_channels", [])),
+            logging_channel = config_dict.get("logging_channel", None),
             ignored_roles=OrderedSet(config_dict.get("ignored_roles", [])),
             max_chain_length=int(config_dict["max_chain_length"]),
             duration=float(config_dict["duration"]),
@@ -199,7 +203,7 @@ class ChainPreventionComponent(
 
         # Text-only messages are never part of a chain, which also breaks any chain they reply to
         if not self.check_for_media(message):
-            return AutomodResponse(False, "Message has no media", None)
+            return AutomodResponse(False, "Message has no media", None, None)
 
         has_triggered = channel_manager.process_message(
             str(message.id),
@@ -214,10 +218,12 @@ class ChainPreventionComponent(
                 [
                     DeleteAction(),
                     MessageAction(self.config.format_response(str(user.id)))
-                ]
+                ],
+                self.config.logging_channel
             )
         return AutomodResponse(
             False,
             "User did not trigger the automod",
+            None,
             None
         )

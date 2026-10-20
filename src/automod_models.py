@@ -22,7 +22,18 @@ class AutomodResponse:
     flagged : bool # True if the message flagged the automod, False if not
     reason : str
     actions : list[BotAction] | None # Actions that the bot should perform regarding the flagged message/user
+    log_to : str | None # Channel ID
     
+@dataclass
+class AutomodLog:
+    "Wrapper for the data shown in a log"
+    message_object : Message
+    log_channel : TextChannel | None
+    reason: str
+    dm_success : tuple[bool, DMAction | None]
+    message_success :  tuple[bool, MessageAction | None]
+    timeout_success : tuple[bool, TimeoutAction | None]
+    delete_success : tuple[bool, DeleteAction | None]
 
 @dataclass
 class BotAction:
@@ -78,6 +89,7 @@ class BaseAutomodComponentConfig(ABC):
     is_global : bool # whether or not the automod affects all the channels of a guild
     affected_channels : OrderedSet # can include categories
     ignored_channels : OrderedSet # Does nothing if is_global is False
+    logging_channel : str | None # channel id | channel where automod logs are sent.
     ignored_roles : OrderedSet # roles unaffected by the automod
     message_response_template : str # Template that will be formatted whenever the bot will post it
 
@@ -220,7 +232,7 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
     async def process_message(self, guild: Guild, channel: GuildChannel, message: Message) -> AutomodResponse:
         "Runs shared validity checks before dispatching to the component-specific handler."
         if str(channel.guild.id) != str(guild.id):
-            return AutomodResponse(False, "Channel does not belong to the provided guild", None)
+            return AutomodResponse(False, "Channel does not belong to the provided guild", None, None)
 
         channel_manager = self.get_manager(str(channel.id))
         if channel_manager is None and self.is_channel_watched(channel):
@@ -229,11 +241,11 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
             channel_manager = self.get_manager(str(channel.id))
 
         if channel_manager is None:
-            return AutomodResponse(False, "Channel is not watched", None)
+            return AutomodResponse(False, "Channel is not watched", None, None)
 
         user = message.author
         if not isinstance(user, Member):
-            return AutomodResponse(False, "Message was not sent in a guild...", None)
+            return AutomodResponse(False, "Message was not sent in a guild...", None, None)
 
         is_immune = self.check_for_immunity(user)
 
