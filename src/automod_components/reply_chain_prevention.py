@@ -25,7 +25,7 @@ from utils import safe_format
 
 
 @dataclass
-class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
+class ReplyChainPreventionComponentConfig(BaseAutomodComponentConfig):
     """Prevents linear reply chains of media messages (attachments, embeds or stickers).
     A chain is M1 <- M2 <- M3 ... where each message contains media and replies to the previous one.
     Several replies to the same message (M1 <- M2, M1 <- M3) are separate chains and do not add up.
@@ -35,7 +35,7 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
 
     DEFAULT_MSG_RESPONSE = ("<@{user_id}>, please don't chain media replies! "
         "Maximum {max_chain_length} media messages per reply chain.")
-    CONFIG_KEY: ClassVar[str] = "chain_prevention_config"
+    COMPONENT_KEY: ClassVar[str] = "reply_chain_prevention"
     RESPONSE_PLACEHOLDERS: ClassVar[tuple[str, ...]] = ("user_id", "max_chain_length", "duration")
 
     max_chain_length : int
@@ -43,40 +43,46 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
     message_response_template : str
 
     @classmethod
-    def get_default(cls, guild_id: str) -> ChainPreventionComponentConfig:
+    def get_default(cls, guild_id: str) -> ReplyChainPreventionComponentConfig:
         return cls(
             guild_id= guild_id,
             is_global= True,
+            enabled = True,
             affected_channels= OrderedSet(),
             ignored_channels= OrderedSet(),
+            logging_channel = None,
             ignored_roles= OrderedSet(),
             max_chain_length= 3,
             duration= 600,
-            message_response_template= ChainPreventionComponentConfig.DEFAULT_MSG_RESPONSE
+            message_response_template= ReplyChainPreventionComponentConfig.DEFAULT_MSG_RESPONSE
         )
 
     def to_dict(self) -> dict:
         return {
             "guild_id": self.guild_id,
             "is_global": self.is_global,
+            "enabled" : self.enabled,
             "affected_channels": list(self.affected_channels),
             "ignored_channels": list(self.ignored_channels),
             "ignored_roles": list(self.ignored_roles),
+            "logging_channel" : self.logging_channel,
             "message_response_template": self.message_response_template,
             "max_chain_length": self.max_chain_length,
             "duration": self.duration,
         }
 
     @classmethod
-    def from_dict(cls, config_dict: dict) -> ChainPreventionComponentConfig:
+    def from_dict(cls, config_dict: dict) -> ReplyChainPreventionComponentConfig:
         if not isinstance(config_dict, dict):
             raise ValueError("ChainPreventionComponentConfig.from_dict expects a dictionary.")
 
         required_keys = {
             "guild_id",
             "is_global",
+            "enabled",
             "affected_channels",
             "ignored_channels",
+            "logging_channel",
             "ignored_roles",
             "max_chain_length",
             "duration",
@@ -88,13 +94,15 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
         return cls(
             guild_id=str(config_dict["guild_id"]),
             is_global=bool(config_dict["is_global"]),
+            enabled = bool(config_dict['enabled']),
             affected_channels=OrderedSet(config_dict.get("affected_channels", [])),
             ignored_channels=OrderedSet(config_dict.get("ignored_channels", [])),
+            logging_channel = config_dict.get("logging_channel", None),
             ignored_roles=OrderedSet(config_dict.get("ignored_roles", [])),
             max_chain_length=int(config_dict["max_chain_length"]),
             duration=float(config_dict["duration"]),
             message_response_template=str(
-                config_dict.get("message_response_template", ChainPreventionComponentConfig.DEFAULT_MSG_RESPONSE)
+                config_dict.get("message_response_template", ReplyChainPreventionComponentConfig.DEFAULT_MSG_RESPONSE)
             ),
         )
 
@@ -106,7 +114,7 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
                 "max_chain_length": self.max_chain_length,
                 "duration": self.duration,
             },
-            ChainPreventionComponentConfig.DEFAULT_MSG_RESPONSE,
+            ReplyChainPreventionComponentConfig.DEFAULT_MSG_RESPONSE,
         )
 
     def format_unique_config_display(self) -> str:
@@ -117,9 +125,9 @@ class ChainPreventionComponentConfig(BaseAutomodComponentConfig):
 class ChannelReplyChainTracker(BaseChannelManager):
     """Keeps track of the reply chain depth of recent media messages within a single channel."""
 
-    def __init__(self, channel_id: str, config: ChainPreventionComponentConfig):
+    def __init__(self, channel_id: str, config: ReplyChainPreventionComponentConfig):
         super().__init__(channel_id, config)
-        self.config: ChainPreventionComponentConfig
+        self.config: ReplyChainPreventionComponentConfig
         self.chains: OrderedDict[str, tuple[float, int]] = OrderedDict() # message_id -> (timestamp, chain depth)
 
     def _evict_expired(self) -> None:
@@ -145,19 +153,19 @@ class ChannelReplyChainTracker(BaseChannelManager):
         return False
 
 
-class ChainPreventionComponent(
-    BaseAutomodComponent[ChannelReplyChainTracker, ChainPreventionComponentConfig]
+class ReplyChainPreventionComponent(
+    BaseAutomodComponent[ChannelReplyChainTracker, ReplyChainPreventionComponentConfig]
 ):
     """Automod that prevents users from chain replying media messages in the watched channels."""
-    CONFIG_KEY: ClassVar[str] = ChainPreventionComponentConfig.CONFIG_KEY
+    COMPONENT_KEY: ClassVar[str] = ReplyChainPreventionComponentConfig.COMPONENT_KEY
     def __init__(
         self,
+        config: ReplyChainPreventionComponentConfig | None,
         guild: Guild,
         memory: BaseAutomodMemoryManager,
-        config: ChainPreventionComponentConfig | None = None,
     ) -> None:
         if config is None:
-            config = ChainPreventionComponentConfig.get_default(str(guild.id))
+            config = ReplyChainPreventionComponentConfig.get_default(str(guild.id))
         super().__init__(config, guild, memory)
 
     @classmethod
@@ -165,12 +173,12 @@ class ChainPreventionComponent(
         cls,
         guild: Guild,
         memory: BaseAutomodMemoryManager,
-    ) -> ChainPreventionComponent:
+    ) -> ReplyChainPreventionComponent:
         config = await memory.global_get_config(
             str(guild.id),
-            ChainPreventionComponentConfig,
+            ReplyChainPreventionComponentConfig,
         )
-        return cls(guild, memory, config)
+        return cls(config,guild, memory)
 
     def add_manager(self, channel_id: str):
         self.channels[channel_id] = ChannelReplyChainTracker(
@@ -199,7 +207,7 @@ class ChainPreventionComponent(
 
         # Text-only messages are never part of a chain, which also breaks any chain they reply to
         if not self.check_for_media(message):
-            return AutomodResponse(False, "Message has no media", None)
+            return AutomodResponse(False, "Message has no media", None, None)
 
         has_triggered = channel_manager.process_message(
             str(message.id),
@@ -214,10 +222,12 @@ class ChainPreventionComponent(
                 [
                     DeleteAction(),
                     MessageAction(self.config.format_response(str(user.id)))
-                ]
+                ],
+                self.config.logging_channel
             )
         return AutomodResponse(
             False,
             "User did not trigger the automod",
+            None,
             None
         )

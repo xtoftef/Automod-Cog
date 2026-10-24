@@ -8,8 +8,8 @@ import logging
 import logging.handlers
 
 from automod_cog import AutomodCog
+from config import TEST, COG_CONFIG
 
-TEST = True
 
 # Configuration
 if TEST:
@@ -68,7 +68,7 @@ async def main():
         print("Slash commands synced successfully.")
 
     # 2. Add Cogs & Adapters
-    automod_cog = AutomodCog(bot)
+    automod_cog = AutomodCog(bot, COG_CONFIG['memory'])
     await bot.add_cog(automod_cog)
 
     # 3. Run Bot

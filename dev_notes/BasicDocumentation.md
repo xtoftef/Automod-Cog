@@ -2,6 +2,8 @@
 
 This file is a brief walkthrough of the system for the automod cog so far. I will begin with important notes, and running instructions, then further down will explain things about the architecture and the various files and classes.
 
+# ⚠️WARNING: This file is currently partially outdated and needs review. So take any notes there lightly or double check with the current state of the codebase.⚠️
+
 ## Running instructions
 
 First of all, dependencies. Make sure you downloaded the discord.py library, which is the main thing we need.

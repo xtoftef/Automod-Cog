@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
-from typing import ClassVar, TypeVar, Generic, Type, Self, Any, Literal, LiteralString
+from typing import ClassVar, TypeVar, Generic, Type, Self, Any, Literal, LiteralString, cast
 
 from discord.abc import GuildChannel
 from discord import Guild, Message, Member
@@ -22,7 +22,18 @@ class AutomodResponse:
     flagged : bool # True if the message flagged the automod, False if not
     reason : str
     actions : list[BotAction] | None # Actions that the bot should perform regarding the flagged message/user
+    log_to : str | None # Channel ID
     
+@dataclass
+class AutomodLog:
+    "Wrapper for the data shown in a log"
+    message_object : Message
+    log_channel : TextChannel | None
+    reason: str
+    dm_success : tuple[bool, DMAction | None]
+    message_success :  tuple[bool, MessageAction | None]
+    timeout_success : tuple[bool, TimeoutAction | None]
+    delete_success : tuple[bool, DeleteAction | None]
 
 @dataclass
 class BotAction:
@@ -72,12 +83,14 @@ class MessageAction(BotAction):
 
 @dataclass
 class BaseAutomodComponentConfig(ABC):
-    CONFIG_KEY: ClassVar[str] = ""
+    COMPONENT_KEY: ClassVar[str] = ""
     RESPONSE_PLACEHOLDERS: ClassVar[tuple[str, ...]] = ("user_id",) # placeholders usable in message_response_template
+    enabled : bool
     guild_id : str # guild for which the config belongs
     is_global : bool # whether or not the automod affects all the channels of a guild
     affected_channels : OrderedSet # can include categories
     ignored_channels : OrderedSet # Does nothing if is_global is False
+    logging_channel : str | None # channel id | channel where automod logs are sent.
     ignored_roles : OrderedSet # roles unaffected by the automod
     message_response_template : str # Template that will be formatted whenever the bot will post it
 
@@ -152,7 +165,7 @@ class BaseAutomodMemoryManager(ABC):
 class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
     "Base class from which all automod components will inherit"
 
-    CONFIG_KEY: ClassVar[str] = ""
+    COMPONENT_KEY: ClassVar[str] = ""
 
     def __init__(
         self,
@@ -166,12 +179,12 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         self.channels: dict[str, ManagerT] = {}
         self.initialize_channel_helpers(guild)
         if not self._config_key_matches():
-            raise NotImplementedError((f"Config Key mismatch detected.\nComponent key: {self.CONFIG_KEY}"
-                                       f"\nPassed Config key: {self.config.CONFIG_KEY}\nMake sure you implemented the automod component properly."))
+            raise NotImplementedError((f"Config Key mismatch detected.\nComponent key: {self.COMPONENT_KEY}"
+                                       f"\nPassed Config key: {self.config.COMPONENT_KEY}\nMake sure you implemented the automod component properly."))
 
     def _config_key_matches(self) -> bool:
         "Method used to check if the config key of the automod component matches that of the config"
-        return self.CONFIG_KEY == self.config.CONFIG_KEY
+        return self.COMPONENT_KEY == self.config.COMPONENT_KEY
 
     def is_channel_watched(self, channel: GuildChannel) -> bool:
         "Checks if the config covers a channel. A channel is also covered when its category is selected."
@@ -185,11 +198,18 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         return bool(channel_ids & set(self.config.affected_channels))
 
 
-    def initialize_channel_helpers(self, guild:Guild):
+    def initialize_channel_helpers(self, guild:Guild) -> bool:
         "Synchronizes managers with the guild's eligible channels."
-        for channel in guild.channels:
-            if self.is_channel_watched(channel):
-                self.add_manager(str(channel.id))
+        if self.config.enabled:
+
+            for channel in guild.channels:
+                if self.is_channel_watched(channel):
+                    self.add_manager(str(channel.id))
+        else:
+            # Clears all channel helpers if component is disabled.
+            self.channels.clear()
+
+        return self.config.enabled
 
     async def update_config(self, new_config: ConfigT, guild: Guild) -> None:
         "Updates the config and refreshes the channel managers. Takes a guild parameter to get the latest setup of a guild"
@@ -220,7 +240,7 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
     async def process_message(self, guild: Guild, channel: GuildChannel, message: Message) -> AutomodResponse:
         "Runs shared validity checks before dispatching to the component-specific handler."
         if str(channel.guild.id) != str(guild.id):
-            return AutomodResponse(False, "Channel does not belong to the provided guild", None)
+            return AutomodResponse(False, "Channel does not belong to the provided guild", None, None)
 
         channel_manager = self.get_manager(str(channel.id))
         if channel_manager is None and self.is_channel_watched(channel):
@@ -229,11 +249,11 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
             channel_manager = self.get_manager(str(channel.id))
 
         if channel_manager is None:
-            return AutomodResponse(False, "Channel is not watched", None)
+            return AutomodResponse(False, "Channel is not watched", None, None)
 
         user = message.author
         if not isinstance(user, Member):
-            return AutomodResponse(False, "Message was not sent in a guild...", None)
+            return AutomodResponse(False, "Message was not sent in a guild...", None, None)
 
         is_immune = self.check_for_immunity(user)
 
@@ -262,16 +282,15 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
         guild: Guild,
     ) -> BaseAutomodComponent:
         "Convenience method to route/create a config based on what has been implemented"
-        from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig, ImageRateLimiterComponent
-        from src.automod_components.chain_prevention import ChainPreventionComponentConfig, ChainPreventionComponent
+        from config import get_component_related_class
 
-        if isinstance(config, ImageRateLimiterComponentConfig):
-            return ImageRateLimiterComponent(guild, memory, config)
-        elif isinstance(config, ChainPreventionComponentConfig):
-            return ChainPreventionComponent(guild, memory, config)
+        ComponentClass = get_component_related_class(config.COMPONENT_KEY, 'component_type')
+        if issubclass(ComponentClass, BaseAutomodComponent):
+            
+            return ComponentClass(config, guild, memory)
+        else:
+            raise TypeError(f"from_config method meant to return AutomodComponent type class but returned {type(ComponentClass)} instead.")
 
-        # TODO: Add more components to the if-elif ladders
+    def __str__(self) -> str:
 
-        raise TypeError(f"Unsupported config type: {type(config).__name__}")
-        from src.component_implementations import from_config # Former code, might keep it there in case i want to bring it back up under a new version
-        return from_config(config, memory, guild)
+        return f"{self.COMPONENT_KEY} - {self.config.guild_id}"

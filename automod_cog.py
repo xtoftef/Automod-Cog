@@ -2,9 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from typing import cast, Literal
-from collections import deque
-import time
+from typing import cast, Literal, Optional
 from datetime import timedelta
 import discord
 
@@ -13,30 +11,15 @@ from src.memory_manager_implementations import JSONMemoryManager
 from src.automod_engine import AutomodEngine
 from src.automod_models import (
     BaseAutomodComponentConfig,BaseAutomodMemoryManager,
+    AutomodLog,
     DeleteAction, MessageAction, TimeoutAction, DMAction, AutomodResponse
 )
-from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
-from src.automod_components.chain_prevention import ChainPreventionComponentConfig
-from DiscordUI.views import AutomodComponentConfigPanelView
-
-# TODO: Note to self when i continue working on this. After some testing, i managed to solve quite a number of issues. Now the
-# config panel is working. It feels like the architecture is nearly there, I might be able to just refactor the code now.
-# Even the JSON memory is saving things properly
-# To test properly with the image limiter: channel ignore, role ignore. Check if the bot properly reinitializes the automod when
-# the config is updated. Okay so, i need to add the logic that restarts the automod with the new config.
+from DiscordUI.views import AutomodComponentConfigPanelView, MasterPanelView
+from config import ENGINE_CONFIG, get_component_related_class
 
 
-
-CONFIG_REGISTRY: dict[
-    str, type[BaseAutomodComponentConfig]
-] = {
-    ImageRateLimiterComponentConfig.CONFIG_KEY: ImageRateLimiterComponentConfig,
-    ChainPreventionComponentConfig.CONFIG_KEY: ChainPreventionComponentConfig
-}
-
-
-
-DEFAULT_MEMORY = JSONMemoryManager("guild_data.json")
+DEFAULT_MEMORY = JSONMemoryManager("guild_data.json") # not using the config.py one since it's just a 
+# default that can be overriden when creating the cog object.
 
 
 class AutomodCog(commands.Cog):
@@ -66,12 +49,16 @@ class AutomodCog(commands.Cog):
         Each action runs independently, so one failing action (e.g. the user has DMs closed) doesn't stop the others.
         Returns a list describing the actions that failed (empty if all succeeded)."""
         failures: list[str] = []
+        dm_action, delete_action, message_action, timeout_action = None , None, None , None
+
         for action in (response.actions or []):
             try:
                 if action.action_type == 'delete':
                     action = cast(DeleteAction, action)
                     # 1. Delete the triggering message
                     await message.delete()
+
+                    delete_action = action
 
                 elif action.action_type == 'timeout':
                     action = cast(TimeoutAction, action)
@@ -81,6 +68,9 @@ class AutomodCog(commands.Cog):
                     if isinstance(message.author, discord.Member):
                         await message.author.timeout(exp_time,reason=action.reason)
 
+                        timeout_action = action
+                    
+
                 elif action.action_type == 'message':
                     action = cast(MessageAction, action)
                     # 2. Send a temporary warning notice
@@ -88,10 +78,13 @@ class AutomodCog(commands.Cog):
                         action.formatted_message_response,
                         delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
                     )
+                    message_action = action
+
                 elif action.action_type == 'dm':
                     action = cast(DMAction, action)
 
                     await message.author.send(action.formatted_message_response)
+                    dm_action = action
 
             except discord.NotFound:
                 pass # Message or member is already gone (e.g. deleted by a moderator)
@@ -99,7 +92,67 @@ class AutomodCog(commands.Cog):
                 failures.append(f"{action.action_type}: {e}")
                 print(f"Automod action '{action.action_type}' failed in channel {message.channel.id}: {e}")
 
+
+        log_channel = None
+
+        if response.log_to and message.guild:
+            log_channel = message.guild.get_channel(int(response.log_to))
+            if not isinstance(log_channel, discord.TextChannel):
+                log_channel = None
+
+        log_data = AutomodLog(
+            message_object= message,
+            log_channel= log_channel,
+            reason= response.reason,
+            dm_success = ((True if dm_action else False), dm_action),
+            message_success= ((True if message_action else False), message_action),
+            timeout_success= ((True if timeout_action else False), timeout_action),
+            delete_success= ((True if delete_action else False), delete_action)
+        )
+
+        await self._send_automod_log(log_data)
+
         return failures
+
+    async def _send_automod_log(self, log_data: AutomodLog):
+        "Sends a log in a specified channel"
+        log_channel = log_data.log_channel
+        if not log_channel:
+            print("No log channel was set.")
+            return 
+
+        user = log_data.message_object.author
+        message = log_data.message_object
+        channel = message.channel
+        
+        if isinstance(channel, (discord.DMChannel, discord.GroupChannel)):
+            raise Exception("DM or Group channel got somehow flagged? wth")
+
+        has_attachments = True if message.attachments else False
+        has_sticker = True if message.stickers else False
+
+        extra_info = ""
+        if has_attachments:
+            extra_info += "Message has attachments\n"
+        elif has_sticker:
+            extra_info += "Message has stickers\n"
+
+        delete_string = f"Message Deleted: {"✅" if log_data.delete_success[0] else "❌"}\n"
+        dm_string = f"DM'd: {"✅" if log_data.dm_success[0] else "❌"}\n"
+        verbal_message_string = f"Verbal Messaged: {"✅" if log_data.message_success[0] else "❌"}\n"
+        timeout_string = f"Timedout: {f"✅ - Length: {log_data.timeout_success[1].duration}" if log_data.timeout_success[0] else "❌"}\n" #type: ignore
+
+        log_string = (f"AUTOMOD LOG:\n"
+                      f"Reason: {log_data.reason}\n"
+                      f"User: <@{user.id}> - `{user.name}`\n"
+                      f"In: {channel.mention}\n"
+                      f"**Flagged Message:**\n> {message.content}\n"
+                      f"{extra_info}"
+                      f"{delete_string}{dm_string}{verbal_message_string}{timeout_string}")
+
+        
+        await log_channel.send(log_string)
+
 
 
     # ==============================================================================
@@ -109,10 +162,12 @@ class AutomodCog(commands.Cog):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocompletes choices based on registered configs matching current user input."""
+        engine_components = ENGINE_CONFIG['components']
+        keys = [key for key in engine_components if engine_components[key]['activate']]
         
         return [
             app_commands.Choice(name=key, value=key)
-            for key in self.automod_engine.AVAILABLE_COMPONENTS
+            for key in keys
             if current.lower() in key.lower()
         ]
 
@@ -120,6 +175,7 @@ class AutomodCog(commands.Cog):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         """Autocompletes only configs that exist for the current guild."""
+        engine_components = ENGINE_CONFIG['components']
         if not interaction.guild_id: return []
 
         guild_id = str(interaction.guild_id)
@@ -129,7 +185,7 @@ class AutomodCog(commands.Cog):
         return [
             app_commands.Choice(name=key, value=key)
             for key in existing_configs.keys()
-            if current.lower() in key.lower()
+            if ((current.lower() in key.lower()) and engine_components[key]["activate"])
         ]
 
 
@@ -139,26 +195,46 @@ class AutomodCog(commands.Cog):
     # COMMANDS
     # ==============================================================================
     @app_commands.command(
+        name="open-master-panel", description="Master control panel to modify the server's automods"
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
+    async def open_master_panel(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild_id = str(interaction.guild_id)
+        if not guild_id or not interaction.guild: return await interaction.edit_original_response(content="This command can only be used in a guild")
+        
+        guild_configs = await self.automod_engine.get_guild_configs(guild_id)
+
+        await interaction.edit_original_response(
+            view=MasterPanelView(
+                self.automod_engine, guild_configs, interaction.user.id, interaction.guild, interaction
+            ),
+            
+        )
+
+    @app_commands.command(
         name="config-view", description="View an existing automod config."
     )
     @app_commands.autocomplete(config_key=existing_config_autocomplete)
     @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
     async def view_config(self, interaction: discord.Interaction, config_key: str):
         guild_id = str(interaction.guild_id)
+        await interaction.response.defer(ephemeral=True)
         if not guild_id: 
-            return await interaction.response.send_message("This command can only be used inside of a guild.", ephemeral=True)
+            return await interaction.edit_original_response(content="This command can only be used inside of a guild.")
         guild_configs = await self.automod_engine.get_guild_configs(guild_id)#MOCK_CONFIG_STORE.get(guild_id, {})
 
         # Traverse through the list of config objects and retrieve the one matching the key
-        cfg = next((config for config in guild_configs if config.CONFIG_KEY == config_key), None)#guild_configs[config_key]
+        cfg = next((config for config in guild_configs if config.COMPONENT_KEY == config_key), None)#guild_configs[config_key]
         if not cfg: 
-            return await interaction.response.send_message(
-                f"❌ No active config found for `{config_key}` in this server.",
-                ephemeral=True,
+            return await interaction.edit_original_response(
+                content=f"❌ No active config found for `{config_key}` in this server."
             )
 
         embed = discord.Embed(
-            title=f"Configuration: {cfg.CONFIG_KEY}",
+            title=f"Configuration: {cfg.COMPONENT_KEY}",
             color=discord.Color.blue(),
         )
         cfg_dict = cfg.to_dict()
@@ -170,7 +246,7 @@ class AutomodCog(commands.Cog):
                 inline=False,
             )
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.edit_original_response(embed=embed)
 
 
     @app_commands.command(
@@ -178,6 +254,7 @@ class AutomodCog(commands.Cog):
     )
     @app_commands.autocomplete(config_key=existing_config_autocomplete)
     @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
     async def update_config(
         self, interaction: discord.Interaction, config_key: str
     ):
@@ -187,7 +264,7 @@ class AutomodCog(commands.Cog):
         guild_configs = await self.automod_engine.get_guild_configs(guild_id)#MOCK_CONFIG_STORE.get(guild_id, {})
 
         # Traverse through the list of config objects and retrieve the one matching the key
-        cfg = next((config for config in guild_configs if config.CONFIG_KEY == config_key), None)#guild_configs[config_key]
+        cfg = next((config for config in guild_configs if config.COMPONENT_KEY == config_key), None)#guild_configs[config_key]
         if not cfg: 
             return await interaction.response.send_message(
                 f"❌ No config found for `{config_key}`. Use `/config-add` to create one first.",
@@ -207,36 +284,40 @@ class AutomodCog(commands.Cog):
     )
     @app_commands.autocomplete(config_key=config_autocomplete)
     @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
     async def add_config(self, interaction: discord.Interaction, config_key: str):
-        if config_key not in CONFIG_REGISTRY:
-            await interaction.response.send_message(
-                f"❌ Invalid config type selected.", ephemeral=True
+        await interaction.response.defer(ephemeral=True)
+        engine_components = [key for key in ENGINE_CONFIG["components"] if ENGINE_CONFIG["components"][key]["activate"]]
+        if config_key not in engine_components:
+            await interaction.response.edit_message(
+                content=f"❌ Invalid config type selected."
             )
             return
 
 
         guild_id = str(interaction.guild_id)
-        if not guild_id or not interaction.guild: return await interaction.response.send_message("This command can only be used in a guild.", ephemeral=True)
+        if not guild_id or not interaction.guild: return await interaction.response.edit_message(content="This command can only be used in a guild")
         guild_configs = await self.automod_engine.get_guild_configs(guild_id)
         
         # Traverse through the list of config objects and retrieve the one matching the key
-        cfg = next((config for config in guild_configs if config.CONFIG_KEY == config_key), None)#guild_configs[config_key]
+        cfg = next((config for config in guild_configs if config.COMPONENT_KEY == config_key), None)#guild_configs[config_key]
         if cfg: 
-            return await interaction.response.send_message(
-                f"❌ Existing config found for `{config_key}`. Use `/config-update` to update the config.",
-                ephemeral=True,
+            return await interaction.response.edit_message(
+                content=f"❌ Existing config found for `{config_key}`. Use `/config-update` to update the config."
             )
 
-        ConfigClass= CONFIG_REGISTRY[config_key]
+
+        ConfigClass = get_component_related_class(config_key, 'config_type')
 
         # Initialize default config if not existing
+        if not issubclass(ConfigClass, BaseAutomodComponentConfig): raise TypeError(f"Meant to retrieve Config subclass but retrieved {type(ConfigClass)} instead")
+        
         cfg = ConfigClass.get_default(guild_id)
 
-        await interaction.response.send_message(
+        await interaction.response.edit_message(
             view=AutomodComponentConfigPanelView(
                 cfg, self.automod_engine, interaction.user.id, interaction.guild
-            ),
-            ephemeral=True,
+            )
         )
 
 
@@ -245,6 +326,48 @@ class AutomodCog(commands.Cog):
     # ==============================================================================
     # TEST COMMANDS
     # ==============================================================================
+    @app_commands.command(name= 'check-engine-cache')
+    @app_commands.default_permissions(administrator=True)
+    async def check_engine_cache(self, interaction: discord.Interaction):
+        # TODO: either handle large cache cases or disable the command outside of testing 
+        import json
+        await interaction.response.defer(ephemeral=True)
+
+        print_cache : dict[str, list[str]]= {}
+        for key, comp_list in self.automod_engine.cache.items():
+            print_cache[key] = [ comp.__str__() for comp in comp_list]
+
+
+        cache_string = f"Engine Cache:\n{json.dumps(print_cache)}"
+
+        return await interaction.edit_original_response(
+            content= cache_string
+        )
+
+    @app_commands.command(name= 'check-automod-cache')
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
+    async def check_guild_component_cache(self, interaction: discord.Interaction):
+        # TODO: either handle large cache cases or disable the command outside of testing 
+        import json
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = interaction.guild_id 
+        if not guild_id: return 
+
+        comps = await self.automod_engine.get_guild_components(str(guild_id))
+        print_cache = {}
+        for key, component in comps.items():
+            
+            print_cache[key] = [chann_id for chann_id in component.channels]
+
+
+        cache_string = f"Component Caches:\n{json.dumps(print_cache)}"
+
+        return await interaction.edit_original_response(
+            content= cache_string,
+        )
+
     @app_commands.command(
         name = "dummy-config-view",
         description="Purely for testing"
@@ -252,28 +375,17 @@ class AutomodCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def dummy_config(self, interaction:discord.Interaction):
         "Test command for a dummy."
-        guild = interaction.guild
-        if guild is None:
-            await interaction.response.send_message(
-                "This test panel can only be opened inside a server.",
-                ephemeral=True,
-            )
-            return
+        # NOTE: emptied since it's not really used now, and used to cause an unnecessary import.
 
-        dummy_config = ImageRateLimiterComponentConfig.get_default("Test") # This test guild_id won't work since the program will detect a guild_id mismatch.
-        dummy_memory = JSONMemoryManager("dummy_memory.json")
-        dummy_engine = AutomodEngine(dummy_memory, [guild])
-    
-        await interaction.response.send_message(
-            view=AutomodComponentConfigPanelView(
-                dummy_config, dummy_engine, interaction.user.id, guild
-            ),
-            ephemeral=True,
-        )
 
     @app_commands.command(name= "test-automod")
     @app_commands.default_permissions(administrator=True) # Can delete messages and time out members, so admins only
-    async def test_automod_action(self, interaction: discord.Interaction, msg_id: str, action_type:Literal['delete', 'message', 'dm', 'timeout']):
+    async def test_automod_action(self, 
+        interaction: discord.Interaction, 
+        msg_id: str, 
+        action_type:Literal['delete', 'message', 'dm', 'timeout'], 
+        log_channel_id : Optional[str] = None
+        ):
 
         # Get message
         if not interaction.channel or isinstance(interaction.channel, (discord.ForumChannel,discord.CategoryChannel)): return
@@ -283,21 +395,21 @@ class AutomodCog(commands.Cog):
         automod = None
         match action_type:
             case 'delete':
-                automod = AutomodResponse(False, "", [DeleteAction()])
+                automod = AutomodResponse(False, "Test Delete", [DeleteAction()], log_channel_id)
             case 'dm':
-                automod = AutomodResponse(False, "", [DMAction("Hi")])
+                automod = AutomodResponse(False, "Test DM", [DMAction("Hi")], log_channel_id)
             case 'message':
-                automod = AutomodResponse(False, "", [MessageAction("Hi")])
+                automod = AutomodResponse(False, "Test message", [MessageAction("Hi")], log_channel_id)
             case 'timeout':
-                automod = AutomodResponse(False, "", [TimeoutAction(60,"Mute test")])
+                automod = AutomodResponse(False, "Test timeout", [TimeoutAction(60,"Mute test")], log_channel_id)
 
         if not automod: return
 
         try:
             failures = await self._handle_automod_response(automod, msg)
             if failures:
-                await interaction.response.send_message(f"Automod action failed. Error: {'; '.join(failures)}")
+                await interaction.response.send_message(f"Automod action failed. Error: {'; '.join(failures)}", ephemeral=True)
             else:
-                await interaction.response.send_message("Automod action successful")
+                await interaction.response.send_message("Automod action successful", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"Automod action failed. Error: {e}")
+            await interaction.response.send_message(f"Automod action failed. Error: {e}", ephemeral=True)
