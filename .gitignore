@@ -179,3 +179,12 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Project stuff ig
+dummy_classes.py
+guild_data.json
+guild_data.json.tmp
+dummy_memory.json
+dummy_memory.json.tmp
+temp.py
+DiscordUI_BKUP

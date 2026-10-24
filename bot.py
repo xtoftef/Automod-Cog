@@ -8,15 +8,17 @@ import logging
 import logging.handlers
 
 from automod_cog import AutomodCog
+from config import TEST, COG_CONFIG
+
 
 # Configuration
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", None)
-
+if TEST:
+    DISCORD_TOKEN = os.getenv("TEST_BOT_TOKEN", None)
+else:
+    DISCORD_TOKEN = os.getenv("PRODUCTION_BOT_TOKEN", None)
 
 if not DISCORD_TOKEN:
     raise Exception("Bot token missing. Please add it to your .env file")
-
-
 
 logger = logging.getLogger('discord')
 logger.setLevel(logging.DEBUG)
@@ -46,6 +48,7 @@ async def main():
     intents = discord.Intents.default()
     intents.message_content = True
     intents.members = True
+    intents.guilds = True
     bot = commands.Bot(command_prefix="!", intents=intents)
 
     @bot.event
@@ -55,13 +58,17 @@ async def main():
         print(f"Logged in as {bot.user} (ID: {bot.user.id})")
         print(bot.guilds)
 
-        
+        # Necessary to get all the guild data. Otherwise it initializes the automods when the bot didn't receive the guild data yet.
+        automod_cog.automod_engine.guilds = list(bot.guilds)
+        automod_cog.automod_engine.init_all_guilds_automod()
+
+
         # Sync slash commands
         await bot.tree.sync()
         print("Slash commands synced successfully.")
 
     # 2. Add Cogs & Adapters
-    automod_cog = AutomodCog(bot)
+    automod_cog = AutomodCog(bot, COG_CONFIG['memory'])
     await bot.add_cog(automod_cog)
 
     # 3. Run Bot
