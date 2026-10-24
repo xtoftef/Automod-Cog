@@ -1,3 +1,5 @@
+DATE OF UPDATE: 20/10/2026
+
 This file is mostly just a status check on the automod cog system, I'll simply be going through what has been achieved and what's left to do.
 
 Currently, the system's architecture is rather stable and convenient to work with. Since things do have a nice flow that makes tracing functions and even data a lot simpler. The codebase is basically shaped in such a way that makes it more scalable and easier to debug and even expand, although there is undeniably more work that can be done to improve the architecture.
