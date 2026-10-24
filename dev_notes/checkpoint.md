@@ -4,6 +4,10 @@ This file is mostly just a status check on the automod cog system, I'll simply b
 
 Currently, the system's architecture is rather stable and convenient to work with. Since things do have a nice flow that makes tracing functions and even data a lot simpler. The codebase is basically shaped in such a way that makes it more scalable and easier to debug and even expand, although there is undeniably more work that can be done to improve the architecture.
 
+There is also now a [config.py](/config.py) file which will, from now on, serve as the master config file for the cog. This file will allow people to add new components to the cog with less headaches and going around through files to edit various niche functions. It aims at streamlining that process.
+
+Latest changes are logged in [CHANGELOG.MD](/CHANGELOG.md).
+
 # What was achieved feature-wise
 - A component-based system for the automod. Automod components are basically parts of the automod that handle specific tasks. For example, one component will target reply chains, another banned words, another will rate limit messages. Below are some features shared by all components (but can be fine-tuned per component):
     - Affects channel globally: Whether or not the component will affect all text channels of the guild.
@@ -14,6 +18,7 @@ Currently, the system's architecture is rather stable and convenient to work wit
     - ignored roles: Roles that should be granted immunity from the automod.
 - The ability to add and modify component configurations directly from the guild. Server admins can run a command to modify a guild component's config using a user-friendly UI (includes buttons, forms and channel/role selectors).
 - Customizable automod actions such as DM'ing the user, deleting the message, timing out the user or simply sending a notification. Though it must be noted that while the system supports this, it is not yet customizable by guilds and are currently only hardcoded in the system.
+- Master control panel. This panel allows server admins to view all the automod components they can activate/deactivate, the component's status and the option to modify the component's config. It also shows components that were not yet created and that can be created. This panel is a UI that has various buttons and helpful visual cues to make the experience more friendly.
 
 ## Currently existing components
 As of now, there are only two component functionalities that were implemented. I will explain them briefly below:
@@ -44,7 +49,7 @@ Since this is a checkpoint, I will cover other features that I plan to implement
 - Customizability for the automod actions (dm, timeout, etc.) to be fine-tuned by server admins for their server. Currently hard-coded.
 - Alert/priority system. Upon receiving a message deletion event (or even the bot itself deleting a message), the bot should alert the automods watching that channel to reflect the deletion within the memory to avoid unwanted interactions. Priority system should be an internal ranking of priorirty for the automod components. This is to handle events where two components flag the same message, the system should pick the highest priority automod component and simply send an alert to the other automod components.
 - Data logging (possibly among the last things implemented). Basically add a logging sub-system to make the flow of data throughout the system much more traceable so as to help with debugging. Though, it'd probably need to be disabled when in production, for ethical reasons.
-- further improved architecture. Where things are more centralized, possibly a master config file, enhanced modularity (like, contorl on which components the bot allows usage of).
+- ~~further improved architecture. Where things are more centralized, possibly a master config file, enhanced modularity (like, contorl on which components the bot allows usage of).~~ Implemented.
 - Possible dashboard (not expected anytime soon LOL). Since modifying server settings from a website is often easier. 
 - Migrating from JSON storage to database (sqlite). Though, this must be kept for after, since the JSON based storage is a lot more flexible when the structure of the data we store changes actively, so that's more of a final step before deployment into production.
 

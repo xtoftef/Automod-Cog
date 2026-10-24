@@ -12,14 +12,14 @@ __all__ = [
 from copy import deepcopy
 import math
 from collections.abc import Iterable
-from typing import Callable, TYPE_CHECKING, cast
+from typing import Callable, TYPE_CHECKING, cast, ClassVar
 from abc import ABC, abstractmethod
 
 import discord
 from discord.enums import ChannelType
 from src.automod_models import BaseAutomodComponentConfig
 from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
-from src.automod_components.chain_prevention import ChainPreventionComponentConfig
+from src.automod_components.reply_chain_prevention import ReplyChainPreventionComponentConfig
 
 from .ui_utils import *
 
@@ -164,6 +164,7 @@ class EditChannelsAndRolesModal(BaseConfigEditModal):
 # =================================================================================
 # Base Modal
 class BaseComponentSpecificModal(BaseConfigEditModal):
+    COMPONENT_KEY: ClassVar[str] = "" # to override
     def __init__(self, panel: AutomodComponentConfigPanelView, *, title: str = "Edit Configuration") -> None:
         super().__init__(panel, title=title)
 
@@ -178,6 +179,7 @@ class BaseComponentSpecificModal(BaseConfigEditModal):
 # ----------------------------- Image Rate Limiter-----------------------------
 class EditImageRateLimiterSpecificModal(BaseComponentSpecificModal):
     "Unique modal for modifying the settings that are unique to the image rate limiter automod component"
+    COMPONENT_KEY: ClassVar[str] = ImageRateLimiterComponentConfig.COMPONENT_KEY
     @property
     def draft_config(self) -> ImageRateLimiterComponentConfig:
         return cast(ImageRateLimiterComponentConfig, self.panel.draft_config)
@@ -244,13 +246,14 @@ class EditImageRateLimiterSpecificModal(BaseComponentSpecificModal):
 # ----------------------------- Chain Prevention -----------------------------
 class EditChainPreventionSpecificModal(BaseComponentSpecificModal):
     "Unique modal for modifying the settings that are unique to the chain prevention automod component"
+    COMPONENT_KEY: ClassVar[str] = ReplyChainPreventionComponentConfig.COMPONENT_KEY
     @property
-    def draft_config(self) -> ChainPreventionComponentConfig:
-        return cast(ChainPreventionComponentConfig, self.panel.draft_config)
+    def draft_config(self) -> ReplyChainPreventionComponentConfig:
+        return cast(ReplyChainPreventionComponentConfig, self.panel.draft_config)
 
     def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
         super().__init__(panel, title="Edit Automod Sensitivity")
-        config : ChainPreventionComponentConfig = self.draft_config
+        config : ReplyChainPreventionComponentConfig = self.draft_config
         self.max_chain_length_input = discord.ui.TextInput(
             default=str(config.max_chain_length),
             placeholder="Positive whole number",
@@ -301,13 +304,13 @@ def unique_modal_router(
     config: BaseAutomodComponentConfig,
 ) -> type[BaseConfigEditModal]:
     "Router function to return the specific config modal depending on the config type"
+    from config import get_component_related_class
 
-    # NOTE: Use class patterns (with parentheses). A bare name would be a capture pattern that matches anything.
-    match config:
-        case ImageRateLimiterComponentConfig():
-            return EditImageRateLimiterSpecificModal
-        case ChainPreventionComponentConfig():
-            return EditChainPreventionSpecificModal
+    ModalClass = get_component_related_class(config.COMPONENT_KEY, 'modal_type')
 
-    # Add your other cases above.
+    if issubclass(ModalClass, BaseComponentSpecificModal):
+
+        return ModalClass
+    
     raise ValueError("Unsupported Component Modal Class passed.")
+    

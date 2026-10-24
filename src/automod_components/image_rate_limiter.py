@@ -32,7 +32,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
 
     DEFAULT_MSG_RESPONSE = ("<@{user_id}>, image limit reached! "
         "Maximum {max_images} images allowed within {window_size} messages.")
-    CONFIG_KEY: ClassVar[str] = "image_rate_limiter_config"
+    COMPONENT_KEY: ClassVar[str] = "image_rate_limiter"
     RESPONSE_PLACEHOLDERS: ClassVar[tuple[str, ...]] = ("user_id", "max_images", "window_size", "duration")
 
     max_images : int
@@ -44,6 +44,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
     def get_default(cls, guild_id: str) -> ImageRateLimiterComponentConfig:
         return cls(
             guild_id= guild_id,
+            enabled = True,
             is_global= True,
             affected_channels= OrderedSet(),
             ignored_channels= OrderedSet(),
@@ -60,9 +61,10 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
         return {
             "guild_id": self.guild_id,
             "is_global": self.is_global,
+            "enabled" : self.enabled,
             "affected_channels": list(self.affected_channels),
             "ignored_channels": list(self.ignored_channels),
-            "logging_channels" : self.logging_channel,
+            "logging_channel" : self.logging_channel,
             "ignored_roles": list(self.ignored_roles),
             "message_response_template": self.message_response_template,
             "max_images": self.max_images,
@@ -78,6 +80,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
         required_keys = {
             "guild_id",
             "is_global",
+            "enabled",
             "affected_channels",
             "ignored_channels",
             "logging_channel",
@@ -93,6 +96,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
         return cls(
             guild_id=str(config_dict["guild_id"]),
             is_global=bool(config_dict["is_global"]),
+            enabled = bool(config_dict['enabled']),
             affected_channels=OrderedSet(config_dict.get("affected_channels", [])),
             ignored_channels=OrderedSet(config_dict.get("ignored_channels", [])),
             logging_channel = config_dict.get("logging_channel", None),
@@ -168,12 +172,13 @@ class ImageRateLimiterComponent(
     which each keep track of the state of their assigned channels.
     
     """
-    CONFIG_KEY: ClassVar[str] = ImageRateLimiterComponentConfig.CONFIG_KEY
+    COMPONENT_KEY: ClassVar[str] = ImageRateLimiterComponentConfig.COMPONENT_KEY
     def __init__(
         self,
+        config: ImageRateLimiterComponentConfig | None,
         guild: Guild,
         memory: BaseAutomodMemoryManager,
-        config: ImageRateLimiterComponentConfig | None = None,
+        
     ) -> None:
         if config is None:
             config = ImageRateLimiterComponentConfig.get_default(str(guild.id))
@@ -189,7 +194,7 @@ class ImageRateLimiterComponent(
             str(guild.id),
             ImageRateLimiterComponentConfig,
         )
-        return cls(guild, memory, config)
+        return cls(config, guild, memory )
 
     def add_manager(self, channel_id: str):
         self.channels[channel_id] = ChannelMessageWindowLimiter(

@@ -8,16 +8,10 @@ from src.automod_models import (
     BaseAutomodComponentConfig
 )
 from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
-from src.automod_components.chain_prevention import ChainPreventionComponentConfig
+from src.automod_components.reply_chain_prevention import ReplyChainPreventionComponentConfig
 
 
 class JSONMemoryManager(BaseAutomodMemoryManager):
-
-    CONFIG_MAP = {
-        BaseAutomodComponentConfig.CONFIG_KEY : BaseAutomodComponentConfig,
-        ImageRateLimiterComponentConfig.CONFIG_KEY : ImageRateLimiterComponentConfig,
-        ChainPreventionComponentConfig.CONFIG_KEY : ChainPreventionComponentConfig
-    }
 
     def __init__(self, memory_file_path: str) -> None:
         super().__init__()
@@ -59,18 +53,18 @@ class JSONMemoryManager(BaseAutomodMemoryManager):
             config_type, BaseAutomodComponentConfig
         ):
             raise TypeError("config_type must be a BaseAutomodComponentConfig subclass")
-        if not config_type.CONFIG_KEY:
-            raise ValueError(f"{config_type.__name__} must define CONFIG_KEY")
+        if not config_type.COMPONENT_KEY:
+            raise ValueError(f"{config_type.__name__} must define COMPONENT_KEY")
 
         guild_configs = self.loaded_memory.get(guild_id, {})
-        stored_config = guild_configs.get(config_type.CONFIG_KEY)
+        stored_config = guild_configs.get(config_type.COMPONENT_KEY)
         if stored_config is None:
             config = config_type.get_default(guild_id)
             await self.global_set_config(config)
             return config
         if not isinstance(stored_config, dict):
             raise ValueError(
-                f"Stored config {config_type.CONFIG_KEY!r} for guild {guild_id!r} "
+                f"Stored config {config_type.COMPONENT_KEY!r} for guild {guild_id!r} "
                 "must be a JSON object"
             )
         return config_type.from_dict(stored_config)
@@ -78,13 +72,14 @@ class JSONMemoryManager(BaseAutomodMemoryManager):
     async def global_set_config(self, config: BaseAutomodComponentConfig) -> None:
         if not isinstance(config, BaseAutomodComponentConfig):
             raise TypeError("config must be a BaseAutomodComponentConfig instance")
-        if not config.CONFIG_KEY:
-            raise ValueError(f"{type(config).__name__} must define CONFIG_KEY")
+        if not config.COMPONENT_KEY:
+            raise ValueError(f"{type(config).__name__} must define COMPONENT_KEY")
 
-        self.loaded_memory.setdefault(config.guild_id, {})[config.CONFIG_KEY] = config.to_dict()
+        self.loaded_memory.setdefault(config.guild_id, {})[config.COMPONENT_KEY] = config.to_dict()
         self.save_memory()
 
     def sync_get_all_guild_configs(self, guild_id: str) -> list[BaseAutomodComponentConfig]:
+        from config import get_component_related_class
     
         # TODO: Add error handling
 
@@ -100,8 +95,13 @@ class JSONMemoryManager(BaseAutomodMemoryManager):
         
         for config_key, data in guild_configs.items():
             try:
-                config_type = self.CONFIG_MAP[config_key] # can throw an error if the memory got altered
-                config_list.append(config_type.from_dict(data)) # from dict can throw an error
+                cfg_type = get_component_related_class(config_key, 'config_type')
+
+                if not issubclass(cfg_type, BaseAutomodComponentConfig):
+                    raise TypeError("Retrieved config type is not a type of BaseAutomodComponentConfig or improperly declared/defined.")
+                    
+                config_list.append(cfg_type.from_dict(data)) # from dict can throw an error
+                
             except Exception as e:
                 # Skip the broken entry instead of crashing, so one renamed/removed component or corrupted entry
                 # doesn't stop every guild's automods from starting. The entry is kept in the file untouched.
