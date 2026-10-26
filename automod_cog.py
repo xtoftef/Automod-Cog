@@ -14,7 +14,7 @@ from src.automod_models import (
     AutomodLog,
     DeleteAction, MessageAction, TimeoutAction, DMAction, AutomodResponse
 )
-from DiscordUI.views import AutomodComponentConfigPanelView, MasterPanelView
+from DiscordUI.views import AutomodComponentConfigPanelView, MasterPanelView, AutomodLogView
 from config import ENGINE_CONFIG, get_component_related_class
 
 
@@ -121,37 +121,22 @@ class AutomodCog(commands.Cog):
             print("No log channel was set.")
             return 
 
-        user = log_data.message_object.author
         message = log_data.message_object
         channel = message.channel
         
         if isinstance(channel, (discord.DMChannel, discord.GroupChannel)):
             raise Exception("DM or Group channel got somehow flagged? wth")
 
-        has_attachments = True if message.attachments else False
-        has_sticker = True if message.stickers else False
+        view = AutomodLogView(automod_log=log_data)
 
-        extra_info = ""
-        if has_attachments:
-            extra_info += "Message has attachments\n"
-        elif has_sticker:
-            extra_info += "Message has stickers\n"
-
-        delete_string = f"Message Deleted: {"✅" if log_data.delete_success[0] else "❌"}\n"
-        dm_string = f"DM'd: {"✅" if log_data.dm_success[0] else "❌"}\n"
-        verbal_message_string = f"Verbal Messaged: {"✅" if log_data.message_success[0] else "❌"}\n"
-        timeout_string = f"Timedout: {f"✅ - Length: {log_data.timeout_success[1].duration}" if log_data.timeout_success[0] else "❌"}\n" #type: ignore
-
-        log_string = (f"AUTOMOD LOG:\n"
-                      f"Reason: {log_data.reason}\n"
-                      f"User: <@{user.id}> - `{user.name}`\n"
-                      f"In: {channel.mention}\n"
-                      f"**Flagged Message:**\n> {message.content}\n"
-                      f"{extra_info}"
-                      f"{delete_string}{dm_string}{verbal_message_string}{timeout_string}")
-
+        allowed_mentions = discord.AllowedMentions(
+            everyone=False, users=False
+        )
         
-        await log_channel.send(log_string)
+        await log_channel.send(
+            view=view, 
+            allowed_mentions= allowed_mentions
+        )
 
 
 
@@ -180,7 +165,7 @@ class AutomodCog(commands.Cog):
 
         guild_id = str(interaction.guild_id)
         existing_configs = await self.automod_engine.get_guild_components(guild_id)
-        print("Existing conf:", existing_configs)
+        #print("Existing conf:", existing_configs)
 
         return [
             app_commands.Choice(name=key, value=key)

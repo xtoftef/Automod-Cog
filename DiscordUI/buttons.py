@@ -1,13 +1,14 @@
 from __future__ import annotations # Needed for the TYPE_CHECKING-only type hints on Python < 3.14
 
-from typing import Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 import discord
 
 if TYPE_CHECKING:
-    from .views import AutomodComponentConfigPanelView, MasterPanelView
+    from .views import AutomodComponentConfigPanelView, MasterPanelView, AutomodLogView
     from src.automod_models import BaseAutomodComponentConfig
     from src.automod_engine import AutomodEngine
+from DiscordUI.modals import DMInputModal, CommentInputModal, TimeoutHandlerModal
 
 class OpenEditModalButton(discord.ui.Button):
     def __init__(
@@ -147,7 +148,6 @@ class OpenConfigViewButton(discord.ui.Button):
         self.master.panel_state_display.content = "⚠️ __**PANEL IS CURRENTLY FROZEN**__ ⚠️\n-# Finish using the other panel to unfreeze. "
         await self.master.interaction.edit_original_response(view = self.master)
 
-
 class CreateConfigViewButton(OpenConfigViewButton):
 
     def __init__(
@@ -164,3 +164,69 @@ class CreateConfigViewButton(OpenConfigViewButton):
 
         super().__init__(master, label, cfg, engine)
 
+
+
+class SendDMButton(discord.ui.Button):
+    "Opens a simple modal to input text for a custom DM to be sent via the bot."
+
+    def __init__(self, user: discord.Member, style: discord.ButtonStyle = discord.ButtonStyle.secondary, label: str | None = "SendDM"):
+        super().__init__(style=style, label=label)
+        self.user = user
+        self.panel : AutomodLogView |None = None
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        "Opens the modal"
+        modal = DMInputModal(self.user)
+        if self.panel:
+            modal.panel = self.panel
+        await interaction.response.send_modal(modal)
+
+class AcknowledgeButton(discord.ui.Button):
+    "Simply marks an automod log as handled/reviewed by a moderator."
+    def __init__(self, style: discord.ButtonStyle = discord.ButtonStyle.primary, label: str | None = "Acknowledge"):
+        super().__init__(style=style, label=label)
+        self.panel : AutomodLogView |None = None
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        "Opens the modal"
+        modal = CommentInputModal()
+        if self.panel:
+            modal.panel = self.panel
+        await interaction.response.send_modal(modal)
+
+class HandleTimeoutButton(discord.ui.Button):
+    "Opens a simple modal to input text for a custom DM to be sent via the bot."
+
+    def __init__(self, user: discord.Member, timeout_success: bool,style: discord.ButtonStyle = discord.ButtonStyle.danger):
+        if user.is_timed_out() or timeout_success:
+            label = "Remove Timeout" 
+        else:
+            label = "Timeout"
+        super().__init__(style=style, label=label)
+        self.user = user
+        self.timeout_success = timeout_success
+        self.panel : AutomodLogView |None = None
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        "Opens the modal"
+        timeout_checked = False
+        if self.panel:
+            timeout_checked = self.panel.timeout_checked
+        if not self.user.is_timed_out() and self.timeout_success and not timeout_checked:
+            # Handle the event when a moderator attempts to remove a timeout but the user already left timeout.
+
+            if self.panel:
+                self.panel.timeout_checked = True
+                self.panel.remove_timeout_button.label = "Timeout"
+                self.panel.timeout_text.content += " **EXPIRED/REMOVED**"  
+                await interaction.response.edit_message(view = self.panel)    
+
+            await interaction.followup.send(
+                content= "⚠️User's timeout has already ran out or was removed manually. Panel was refreshed accordingly, but reconsider the action",
+                ephemeral=True
+            )
+            return
+        modal = TimeoutHandlerModal(self.user)
+        if self.panel:
+            modal.panel = self.panel
+        await interaction.response.send_modal(modal)

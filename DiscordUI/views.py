@@ -8,6 +8,7 @@ from src.automod_models import BaseAutomodComponentConfig
 
 if TYPE_CHECKING:
     from src.automod_engine import AutomodEngine
+    from src.automod_models import AutomodLog
 
 
 
@@ -360,4 +361,160 @@ class MasterPanelView(discord.ui.LayoutView):
             for button in action_row.walk_children():
                 if isinstance(button, discord.ui.Button):
                     button.disabled = True
+        self.stop()
+
+
+
+
+class AutomodLogView(discord.ui.LayoutView):
+    """Interactive embed that displays information of action(s) taken by the automod."""
+
+    def __init__(self, automod_log: AutomodLog) -> None:
+        super().__init__(timeout=86400)
+        self.log_data = automod_log
+        self.timeout_checked = False # Niche attribute used by the timeout button to handle cases where a timeout expired/was removed
+
+        # Format the data
+        self.prepare_text()
+
+        # Build the container
+        self.container = self.build_container()
+
+        # Action row containing the buttons
+        self.button_row = self.build_button_row()
+
+        self.add_item(
+            self.container
+        ).add_item(
+            self.button_row
+        )
+
+    def prepare_text(self):
+        "Formats the log data into text to be added to the embed."
+        
+        log_channel = self.log_data.log_channel
+        if not log_channel:
+            print("No log channel was set.")
+            return 
+
+        user = self.log_data.message_object.author
+        message = self.log_data.message_object
+        channel = message.channel
+        
+        if isinstance(channel, (discord.DMChannel, discord.GroupChannel)):
+            raise Exception("DM or Group channel got somehow flagged? wth")
+
+        has_attachments = "✅" if message.attachments else "❌"
+        has_sticker = "✅" if message.stickers else "❌"
+
+        extra_info = ""
+        if has_attachments:
+            extra_info += "Message has attachments\n"
+        elif has_sticker:
+            extra_info += "Message has stickers\n"
+
+        self.header_txt = discord.ui.TextDisplay(f"# AUTOMOD LOG")
+
+        self.body_general = discord.ui.TextDisplay((
+            f"Reason: {self.log_data.reason}\n"
+            f"User: <@{user.id}> - `{user.name}`\n"
+            f"In: {channel.mention}\n"
+        ))
+
+        self.additional_info = discord.ui.TextDisplay(
+            f"Has Attachments: {has_attachments} | Has Sticker: {has_sticker}"
+        )
+
+        self.flagged_msg_text = discord.ui.TextDisplay(f"### Flagged Message:\n> {message.content}")
+
+        self.delete_text = discord.ui.TextDisplay(
+            f"Message Deleted: ❌"
+        )
+        self.dm_text = discord.ui.TextDisplay(
+            f"DM'd: ❌"
+        )
+        self.verbal_text = discord.ui.TextDisplay(
+            f"Verbal Messaged: ❌"
+        )
+        self.timeout_text = discord.ui.TextDisplay(
+            f"Timedout: ❌"
+        )
+
+        delete_action = self.log_data.delete_success[1]
+        dm_action = self.log_data.dm_success[1]
+        verbal_action = self.log_data.message_success[1]
+        timeout_action = self.log_data.timeout_success[1]
+
+        if self.log_data.delete_success[0] and delete_action:
+            self.delete_text.content = (
+                f"Message Deleted: ✅"
+            )
+
+        if self.log_data.dm_success[0] and dm_action:
+            self.dm_text.content = (
+                f"DM'd: ✅"
+            )
+
+        if self.log_data.message_success[0] and verbal_action:
+            self.verbal_text.content = (
+                f"Verbal Messaged: ✅"
+            )
+
+        if self.log_data.timeout_success[0] and timeout_action:
+            self.timeout_text.content = (
+                f"Timed out: ✅ - Duration: {timeout_action.duration} minutes."
+            )
+
+    def build_container(self) -> discord.ui.Container:
+        Separator = discord.ui.Separator
+        self.moderator_action = discord.ui.TextDisplay("Moderator Action: `None`")
+        container = discord.ui.Container(
+            self.header_txt,
+            Separator(),
+            self.body_general,
+            Separator(),
+            self.additional_info,
+            Separator(),
+            self.flagged_msg_text,
+            Separator(),
+            self.delete_text,
+            self.dm_text,
+            self.verbal_text,
+            self.timeout_text,
+            Separator(),
+            self.moderator_action
+        )
+
+        return container
+
+    def build_button_row(self) -> discord.ui.ActionRow:
+        user = self.log_data.message_object.author
+        if isinstance(user, discord.Member):
+
+            self.acknowledge_button = AcknowledgeButton()
+            self.acknowledge_button.panel = self
+
+            self.send_dm_button = SendDMButton(user)
+            self.send_dm_button.panel = self
+
+            self.remove_timeout_button = HandleTimeoutButton(user, self.log_data.timeout_success[0])
+            self.remove_timeout_button.panel = self
+
+            action_row = discord.ui.ActionRow(
+                self.acknowledge_button,
+                self.send_dm_button,
+                self.remove_timeout_button
+            )
+
+        else:
+            return discord.ui.ActionRow()
+
+        return action_row
+
+    def finish(self, action_done_text: str) -> None:
+        self.moderator_action.content = f"Moderator Action: {action_done_text}"
+
+        for button in self.button_row.walk_children():
+            if isinstance(button, discord.ui.Button):
+                button.disabled = True
         self.stop()

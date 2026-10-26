@@ -1,4 +1,6 @@
-from __future__ import annotations # Needed for the TYPE_CHECKING-only type hints on Python < 3.14
+from __future__ import annotations
+
+from discord.utils import MISSING # Needed for the TYPE_CHECKING-only type hints on Python < 3.14
 
 __all__ = [
     "BaseConfigEditModal",
@@ -9,6 +11,8 @@ __all__ = [
     "unique_modal_router"
 ]
 
+import re
+from datetime import timedelta
 from copy import deepcopy
 import math
 from collections.abc import Iterable
@@ -26,8 +30,189 @@ from .ui_utils import *
 if TYPE_CHECKING:
     # Clears out the type check flag while avoiding circular imports
     # NOTE: This can't be used for runtime events such as creating an object of the class or checking instance.
-    from .views import AutomodComponentConfigPanelView
+    from .views import AutomodComponentConfigPanelView, AutomodLogView
     
+
+# =================================================================================
+# Misc Modals
+# =================================================================================
+class DMInputModal(discord.ui.Modal):
+    "Simple modal that prompts for a message to be DM'd to the user"
+    def __init__(self, user: discord.Member) -> None:
+        super().__init__(title="Send DM to user", timeout=None)
+        self.user = user
+        self.panel: AutomodLogView | None = None
+
+        self.dm_message_input = discord.ui.TextInput(
+            placeholder="Hello, we wish to inform you of...",
+            required=True,
+            style=discord.TextStyle.paragraph,
+            max_length=2000,
+        )
+
+        self.add_item(discord.ui.Label(
+            text = "DM message:",
+            description="Type your DM message below.",
+            component= self.dm_message_input
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        #await interaction.response.defer(ephemeral=True)
+        if isinstance(interaction.channel, (discord.ForumChannel, discord.CategoryChannel)): 
+            raise Exception("Channel is a forum or category channel, which can't handle this interaction.")
+        try:
+            embed = discord.Embed(
+                title= f"{self.user.guild.name}'s Staff",
+                description= f"### The following message was communicated to you:\n\n {self.dm_message_input.value}"
+            )
+            await self.user.send(embed=embed)
+            
+            if self.panel:
+                self.panel.finish(
+                    f"{interaction.user.mention} Sent a DM."
+                )
+                await interaction.response.edit_message(view= self.panel)
+
+
+        except discord.Forbidden as e:
+            await interaction.response.send_message(content=f"Failed to send the DM to {self.user.mention}.\n User's DMs was closed.", ephemeral=True)
+
+            
+class CommentInputModal(discord.ui.Modal):
+    "Simple modal that prompts for a message to be DM'd to the user"
+    def __init__(self) -> None:
+        super().__init__(title="Add an optional reason/comment.", timeout=None)
+        self.panel: AutomodLogView | None = None
+
+        self.comment_input = discord.ui.TextInput(
+            required=False,
+            style=discord.TextStyle.paragraph,
+            max_length=300,
+        )
+
+        self.add_item(discord.ui.Label(
+            text = "Optional comment/reason:",
+            component= self.comment_input
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+
+        if self.panel:
+            self.panel.finish((
+                f"{interaction.user.mention} marked as read."
+                f"{f"\n**Comment:** {self.comment_input.value}" if self.comment_input.value else ""}"
+            ))
+            await interaction.response.edit_message(view= self.panel)
+
+class TimeoutHandlerModal(discord.ui.Modal):
+    "Simple modal that prompts for a message to be DM'd to the user"
+    def __init__(self, user: discord.Member) -> None:
+        super().__init__(title="Timeout/Remove timeout from user", timeout=None)
+        self.user = user
+        self.panel: AutomodLogView | None = None
+
+        self.duration_input: discord.ui.TextInput | None = None
+        self.dm_message_input: discord.ui.TextInput | None = None
+
+        self.populate_modal()
+
+
+    def populate_modal(self) -> None:
+        """Simply populates the modal based on the timeout state of the user."""
+        if not self.user.is_timed_out():
+            # If user is NOT timed out, prompt for timeout duration
+            self.duration_input = discord.ui.TextInput(
+                default="1h",
+                placeholder='"1h", "24h"',
+                required=True,
+                style=discord.TextStyle.short,
+                max_length=10,
+            )
+
+            self.add_item(
+                discord.ui.Label(
+                    text="Timeout Duration:",
+                    description='Only supports hours/minutes. Such as "1h"',
+                    component=self.duration_input,
+                )
+            )
+
+        # Reason prompt
+        self.reason_input = discord.ui.TextInput(
+            placeholder="Type your reason...",
+            required=True,
+            style=discord.TextStyle.paragraph,
+            max_length=300,
+        )
+
+        self.add_item(
+            discord.ui.Label(
+                text=f"{"Timeout" if self.duration_input else "Timeout removal"} reason:",
+                component=self.reason_input,
+            )
+        )
+
+    def parse_timeout_input(self) -> timedelta | None:
+        """Parses duration input like '1h', '24h', or '30m' into a timedelta object."""
+        if not self.duration_input or not self.duration_input.value:
+            return None
+
+        match = re.match(r"^(\d+)\s*([hm])$", self.duration_input.value.strip().lower())
+        if not match:
+            return None
+
+        amount, unit = int(match.group(1)), match.group(2)
+        if unit == "h":
+            return timedelta(hours=amount)
+        elif unit == "m":
+            return timedelta(minutes=amount)
+
+        return None
+
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if isinstance(interaction.channel, (discord.ForumChannel, discord.CategoryChannel)):
+            raise Exception("Channel is a forum or category channel, which can't handle this interaction.")
+
+        # Handle Timeout State Changes
+        if self.user.is_timed_out():
+            try:
+                await self.user.timeout(None, reason=f"Timeout removed by {interaction.user}")
+                action_text = f"{interaction.user.mention} removed the timeout with reason:\n{self.reason_input.value}"
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    content=f"Failed to remove timeout for {self.user.mention}. Missing permissions.",
+                    ephemeral=True,
+                )
+                return
+        else:
+            duration = self.parse_timeout_input()
+            if duration is None:
+                await interaction.response.send_message(
+                    content="Invalid duration format. Please use numbers followed by 'h' or 'm' (e.g., '1h', '30m').",
+                    ephemeral=True,
+                )
+                return
+
+            try:
+                await self.user.timeout(duration, reason=f"Timed out by {interaction.user}")
+                action_text = f"{interaction.user.mention} added a {self.duration_input.value} timeout with reason:\n{self.reason_input.value}" # type: ignore
+
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    content=f"Failed to timeout {self.user.mention}. Missing permissions.",
+                    ephemeral=True,
+                )
+                return
+            
+        if self.panel:
+            self.panel.finish(action_text)
+            await interaction.response.edit_message(view=self.panel)
+
+
+
+
+
 
 
 # =================================================================================

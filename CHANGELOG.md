@@ -59,6 +59,7 @@ This one is a big one that required modifying a lot of files, primarily within t
 - Modified most commands so that they defer an interaction as soon as it comes and later edits the message when the request is processed.
 - Added two commands `check-engine-cache` and `check-automod-cache`. The first simple returns a simple string in JSON format containing some data about what's currently in the engine's cache. The latter returns a simple JSON string that gives insight about what components are active and what channels are currently observed.
 - Removed the body for `dummy_config` command, meaning it does not work anymore. Might be removed entirely in the future or repurposed.
+- `_send_automod_log` method now sends an interactive `AutomodLogView` instead of a raw string.
 
 ## [bot.py](/bot.py)
 - `TEST` constant now comes from [config.py](/config.py)
@@ -79,15 +80,26 @@ This one is a big one that required modifying a lot of files, primarily within t
 - Added a `DisableButton` class. This allows a user to disable an enabled component within the master panel.
 - Added an `OpenConfigViewButton` class. Which triggers a `AutomodComponentConfigPanelView` when pressed.
 - Added a `CreateConfigViewButton` class. It inherits from the class above, except it's fine-tuned to handle the event where a config does not exist yet and allows the user to create one.
+- Added a `SendDMButton` class. Designed to work with `AutomodLogView`. Opens a modal that sends a DM when pressed.
+- Added a `AcknowledgeButton` class. Designed to work with `AutomodLogView`. Opens a modal that prompts for a reason and marks the automod log as reviewed.
+- Added a `HandleTimeoutButton` class. Designed to work with `AutomodLogView`. Opens a modal that allows the moderator to add/remove a timeout from a user.
 
 ## [modals.py](/DiscordUI/modals.py)
 - Added `COMPONENT_KEY` variables under `BaseComponentSpecificModal` class and its children.
 - Modified `unique_modal_router` to use the new method `get_component_related_class` from `config.py`.
+- Added a `DMInputModal` class. Designed to work with `AutomodLogView`.
+- Added a `CommentInputModal` class. Designed to work with `AutomodLogView`.
+- Added a `TimeoutHandlerModal` class. Designed to work with `AutomodLogView`.
+
 ## [views.py](/DiscordUI/views.py)
 - Minor modifications to `AutomodComponentConfigPanelView`. Mostly just refactoring/parity changes for the new architecture. Also added a `master` attribute that defaults to None. This is to handle cases where the config panel was created from a master panel rather from a command.
 - Added `MasterPanelView` class. 
     - This is the view that is used within the `open-master-panel` command.
     - Note: This view can be further improved with some small tweaks here and there to improve it. But it's otherwise functional. It could also take some cleanup from unneeded methods and stuff.
+- Added a `AutomodLogView` class.
+    - This is the view that is used within the `_send_automod_log` method in [automod_cog.py](/automod_cog.py)
+    - Mainly works with `AutomodLog` dataclass and displays information about an automod flag.
+
 ## [automod_engine.py](/src/automod_engine.py)
 - Modified `AutomodEngine` class:
     - Removed the `AVAILABLE_COMPONENTS` constant, since it's of no use with the new architecture that's centralized within `config.py`.
@@ -106,6 +118,7 @@ This one is a big one that required modifying a lot of files, primarily within t
 - Modified `JSONMemoryManager`:
     - Removed `CONFIG_MAP` constant given the new architecture now does that job.
     - General parity changes in order to fit the new architecture, using `get_related_component_class` from `config.py`.
+
 ## [reply_chain_prevention.py]() / [chain_prevention.py](/src/automod_components/chain_prevention.py)
 - renamed the file from `chain_prevention.py` to `reply_chain_prevention.py`
 - Renamed the `COMPONENT_KEY` constants value from `chain_prevention_config` to `reply_chain_prevention`

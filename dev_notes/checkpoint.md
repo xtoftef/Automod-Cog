@@ -19,6 +19,7 @@ Latest changes are logged in [CHANGELOG.MD](/CHANGELOG.md).
 - The ability to add and modify component configurations directly from the guild. Server admins can run a command to modify a guild component's config using a user-friendly UI (includes buttons, forms and channel/role selectors).
 - Customizable automod actions such as DM'ing the user, deleting the message, timing out the user or simply sending a notification. Though it must be noted that while the system supports this, it is not yet customizable by guilds and are currently only hardcoded in the system.
 - Master control panel. This panel allows server admins to view all the automod components they can activate/deactivate, the component's status and the option to modify the component's config. It also shows components that were not yet created and that can be created. This panel is a UI that has various buttons and helpful visual cues to make the experience more friendly.
+- Automod log embed. The bot will send a log to the configured channel and provide helpful information about why the automod was tripped and action taken by the bot. It also provides some additional functionality such as the ability to mark the log as read, send a dm to the flagged user or add/remove a timeout from the flagged user.
 
 ## Currently existing components
 As of now, there are only two component functionalities that were implemented. I will explain them briefly below:
@@ -43,7 +44,7 @@ Another type of chain is when attachments are sent consecutively with no regular
 # What's planned next.
 Since this is a checkpoint, I will cover other features that I plan to implement in the near or not so near future. There is no set order of what will come before, it's more like an unordered list of things that need to be done.
 - Add the config option for setting and modifying the logging channel for the various components. Planned to be added to the existing modals.
-- Add a nice embed display for the automod logs. Possibly add buttons, like one to unmute the person or something
+- ~~Add a nice embed display for the automod logs. Possibly add buttons, like one to unmute the person or something~~. IMPLEMENTED
 - Implement the planned automod components listed above.
 - Implement a sort of listener that watches a specific channel and gathers data for a defined period of time. The data to be gathered will include: user_id, gif counter, attachment counter, total media count. The data mentioned previously will be classified by day.
 - Customizability for the automod actions (dm, timeout, etc.) to be fine-tuned by server admins for their server. Currently hard-coded.
