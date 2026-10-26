@@ -90,12 +90,17 @@ This one is a big one that required modifying a lot of files, primarily within t
 - Added a `DMInputModal` class. Designed to work with `AutomodLogView`.
 - Added a `CommentInputModal` class. Designed to work with `AutomodLogView`.
 - Added a `TimeoutHandlerModal` class. Designed to work with `AutomodLogView`.
+- Modified `EditChannelsAndRolesModal`. 
+    - Added an input field for logging channel and the relevant handling for updating the data.
 
 ## [views.py](/DiscordUI/views.py)
-- Minor modifications to `AutomodComponentConfigPanelView`. Mostly just refactoring/parity changes for the new architecture. Also added a `master` attribute that defaults to None. This is to handle cases where the config panel was created from a master panel rather from a command.
+- Minor modifications to `AutomodComponentConfigPanelView`. 
+    - Mostly just refactoring/parity changes for the new architecture. Also added a `master` attribute that defaults to None. This is to handle cases where the config panel was created from a master panel rather from a command.
+    - Added display for the logging channel
 - Added `MasterPanelView` class. 
     - This is the view that is used within the `open-master-panel` command.
     - Note: This view can be further improved with some small tweaks here and there to improve it. But it's otherwise functional. It could also take some cleanup from unneeded methods and stuff.
+    - added display for the logging channel
 - Added a `AutomodLogView` class.
     - This is the view that is used within the `_send_automod_log` method in [automod_cog.py](/automod_cog.py)
     - Mainly works with `AutomodLog` dataclass and displays information about an automod flag.

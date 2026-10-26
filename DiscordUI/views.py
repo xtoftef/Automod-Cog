@@ -108,6 +108,7 @@ class AutomodComponentConfigPanelView(discord.ui.LayoutView):
         )
         self.targets_display.content = (
             "## Channels and Roles\n"
+            f"**Logging Channel: {f"<#{config.logging_channel}>" if config.logging_channel else "`None`"}**\n"
             f"**Affected Channels ({len(config.affected_channels)}):**\n"
             f"{_format_guild_entities(self.guild, config.affected_channels, entity_type='channel')}\n"
             f"**Ignored Channels ({len(config.ignored_channels)}):**\n"
@@ -201,6 +202,9 @@ class MasterPanelView(discord.ui.LayoutView):
                     edit_button = action_row.children[0]
                     #remove the disable button, replace it with enable button and then reinsert the edit button to maintain order.
                     action_row.remove_item(edit_button)
+                    if isinstance(edit_button, OpenConfigViewButton):
+                        cfg = edit_button.cfg
+                    else: raise Exception("Somehow it's not a OpenConfigViewButton, which is not meant to happen there.")
                     
                 else:
                     cfg = await self.engine.get_single_config(str(self.guild.id), component_key)
@@ -218,6 +222,9 @@ class MasterPanelView(discord.ui.LayoutView):
                     edit_button = action_row.children[0]
                     #remove the disable button, replace it with enable button and then reinsert the edit button to maintain order.
                     action_row.remove_item(edit_button)
+                    if isinstance(edit_button, OpenConfigViewButton):
+                        cfg = edit_button.cfg
+                    else: raise Exception("Somehow it's not a OpenConfigViewButton, which is not meant to happen there.")
                     
                 else:
                     cfg = await self.engine.get_single_config(str(self.guild.id), component_key)
@@ -230,6 +237,7 @@ class MasterPanelView(discord.ui.LayoutView):
                 )
                     
             case 'inexistent':
+                cfg = None
                 edit_button = action_row.children[0]
                 action_row.remove_item(edit_button)
                 # Replace the 2 buttons with a Create button
@@ -239,7 +247,8 @@ class MasterPanelView(discord.ui.LayoutView):
         # remove old section text with the updated one
         section.remove_item(section.children[0]).add_item(
             discord.ui.TextDisplay((
-                f"{component_key.replace('_', ' ').capitalize()}\n"
+                f"## {component_key.replace('_', ' ').capitalize()}\n"
+                f"Logging channel: {f"<#{cfg.logging_channel}>" if (cfg and cfg.logging_channel) else "`None`"}\n"
                 f"Status: {self.STATE_MAP[new_state]}"
             ))
         )
@@ -251,8 +260,9 @@ class MasterPanelView(discord.ui.LayoutView):
         
         section = discord.ui.Section( # Channel and roles
             discord.ui.TextDisplay((
-                f"{component_key.replace('_', ' ').capitalize()}\n"
-                f"Status: {self.STATE_MAP[state]}"
+                f"## {component_key.replace('_', ' ').capitalize()}\n"
+                f"Logging channel: {f"<#{cfg.logging_channel}>" if (cfg and cfg.logging_channel) else "`None`"}\n"
+                f"Status: {self.STATE_MAP[state]}"       
             )),
             accessory=discord.ui.Button(label = "Placeholder"), # placeholder until i get img links for the thumbnail
         )

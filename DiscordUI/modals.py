@@ -76,8 +76,7 @@ class DMInputModal(discord.ui.Modal):
 
         except discord.Forbidden as e:
             await interaction.response.send_message(content=f"Failed to send the DM to {self.user.mention}.\n User's DMs was closed.", ephemeral=True)
-
-            
+       
 class CommentInputModal(discord.ui.Modal):
     "Simple modal that prompts for a message to be DM'd to the user"
     def __init__(self) -> None:
@@ -212,9 +211,6 @@ class TimeoutHandlerModal(discord.ui.Modal):
 
 
 
-
-
-
 # =================================================================================
 # Shared Modals
 # =================================================================================
@@ -274,12 +270,23 @@ class EditGeneralModal(BaseConfigEditModal):
         )
         await self.refresh_panel(interaction)
 
-
 class EditChannelsAndRolesModal(BaseConfigEditModal):
     "General modal for modifying affected channel and roles. Shared by all automod components"
     def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
         super().__init__(panel, title="Edit Channels and Roles")
         config = panel.draft_config
+        logging_channel = []
+        if config.logging_channel: logging_channel = [config.logging_channel]
+        self.logging_channel_input = discord.ui.ChannelSelect(
+            custom_id="logging_channel",
+            placeholder="Select the channel in which the automod will log this specific component.",
+            channel_types=VALID_CHANNEL_TYPES,
+            min_values=0,
+            max_values=1,
+            default_values = _channel_select_defaults(
+                panel.guild, logging_channel
+            )
+        )
         self.affected_channels_input = discord.ui.ChannelSelect(
             custom_id="affected_channels",
             placeholder="Select channels affected by this automod",
@@ -309,6 +316,14 @@ class EditChannelsAndRolesModal(BaseConfigEditModal):
                 panel.guild, config.ignored_roles
             ),
         )
+
+        self.add_item(
+            discord.ui.Label(
+                text= "Logging Channel",
+                description="The channel in which the automod log will be sent.",
+                component=self.logging_channel_input,
+            )
+        )
         self.add_item(
             discord.ui.Label(
                 text="Affected channels",
@@ -332,6 +347,7 @@ class EditChannelsAndRolesModal(BaseConfigEditModal):
         )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        self.panel.draft_config.logging_channel = str(self.logging_channel_input.values[0].id)
         self.panel.draft_config.affected_channels = type(
             self.panel.draft_config.affected_channels
         )(str(channel.id) for channel in self.affected_channels_input.values)
