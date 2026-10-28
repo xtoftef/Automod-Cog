@@ -17,7 +17,7 @@ Latest changes are logged in [CHANGELOG.MD](/CHANGELOG.md).
     - logging channel: The channel to which the bot will sent a log whenever a user trips the automod.
     - ignored roles: Roles that should be granted immunity from the automod.
 - The ability to add and modify component configurations directly from the guild. Server admins can run a command to modify a guild component's config using a user-friendly UI (includes buttons, forms and channel/role selectors).
-- Customizable automod actions such as DM'ing the user, deleting the message, timing out the user or simply sending a notification. Though it must be noted that while the system supports this, it is not yet customizable by guilds and are currently only hardcoded in the system.
+- Customizable automod actions such as DM'ing the user, deleting the message, timing out the user or simply sending a notification. Server admins can edit how these actions behave, such as the specific response sent by dm, or the timeout duration.
 - Master control panel. This panel allows server admins to view all the automod components they can activate/deactivate, the component's status and the option to modify the component's config. It also shows components that were not yet created and that can be created. This panel is a UI that has various buttons and helpful visual cues to make the experience more friendly.
 - Automod log embed. The bot will send a log to the configured channel and provide helpful information about why the automod was tripped and action taken by the bot. It also provides some additional functionality such as the ability to mark the log as read, send a dm to the flagged user or add/remove a timeout from the flagged user.
 
@@ -47,10 +47,13 @@ Since this is a checkpoint, I will cover other features that I plan to implement
 - ~~Add a nice embed display for the automod logs. Possibly add buttons, like one to unmute the person or something~~. IMPLEMENTED
 - Implement the planned automod components listed above.
 - Implement a sort of listener that watches a specific channel and gathers data for a defined period of time. The data to be gathered will include: user_id, gif counter, attachment counter, total media count. The data mentioned previously will be classified by day.
-- Customizability for the automod actions (dm, timeout, etc.) to be fine-tuned by server admins for their server. Currently hard-coded.
+- ~~Customizability for the automod actions (dm, timeout, etc.) to be fine-tuned by server admins for their server. Currently hard-coded.~~
 - Alert/priority system. Upon receiving a message deletion event (or even the bot itself deleting a message), the bot should alert the automods watching that channel to reflect the deletion within the memory to avoid unwanted interactions. Priority system should be an internal ranking of priorirty for the automod components. This is to handle events where two components flag the same message, the system should pick the highest priority automod component and simply send an alert to the other automod components.
+- Escalation system/ auto-punishment. Each component can be configured to keep track of how many times a user was flagged in a short time span and then take a stronger action or send an alert to the staff if there's anomalous activity.
 - Data logging (possibly among the last things implemented). Basically add a logging sub-system to make the flow of data throughout the system much more traceable so as to help with debugging. Though, it'd probably need to be disabled when in production, for ethical reasons.
 - ~~further improved architecture. Where things are more centralized, possibly a master config file, enhanced modularity (like, contorl on which components the bot allows usage of).~~ Implemented.
 - Possible dashboard (not expected anytime soon LOL). Since modifying server settings from a website is often easier. 
 - Migrating from JSON storage to database (sqlite). Though, this must be kept for after, since the JSON based storage is a lot more flexible when the structure of the data we store changes actively, so that's more of a final step before deployment into production.
+- Import/Export config commands. Export command will cause the bot to output a JSON file containing the configuration of the server's automods and stuff. Import command would allow server admins to pass in a JSON file that was exported previously to override the current server config settings.
+- help command.
 

@@ -41,25 +41,30 @@ class SaveConfigButton(discord.ui.Button):
             edit_btn.cfg = new_cfg
 
     async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         saved = await self.panel.engine.set_config(self.panel.guild, self.panel.draft_config)
         if not saved:
             # Keep the panel open so the admin can retry instead of believing it was saved
-            self.panel.status_display.content = "❌ Could not save the config. Aplogies for the error"
-            await interaction.response.edit_message(view=self.panel)
+            self.panel.status_display.content = "❌ Could not save the config. Apologies for the error"
+            await interaction.edit_original_response(view=self.panel)
             return
 
         master = self.panel.master_panel
         if master:
-            await master.modify_buttons(self.panel.draft_config.COMPONENT_KEY, 'enabled', 'inexistent')
+            new_state = "enabled" if self.panel.draft_config.enabled else "disabled"
+            action_row: discord.ui.ActionRow = master.segments[self.panel.draft_config.COMPONENT_KEY]['action_row']
+            if len(action_row.children) > 1: prev_state = new_state # more than one button means component config existed
+            else: prev_state = 'inexistent' # Only 1 button means there's only a create button
+            await master.modify_buttons(self.panel.draft_config.COMPONENT_KEY, new_state, prev_state) # Need to add a fix there, that properly defines the new and previous states.
             self._write_master_edit_cfg(self.panel.draft_config)
             
             master.panel_state_display.content = "☑️ Panel can be edited again"
             master.frozen = False
             master.refresh_display()
             
-            await master.interaction.edit_original_response(view= master)
+            await master.interaction.edit_original_response(view=master)
         self.panel.finish("✅ Saved to the engine.")
-        await interaction.response.edit_message(view=self.panel)
+        await interaction.edit_original_response(view=self.panel)
 
 
 class CancelConfigButton(discord.ui.Button):
@@ -69,6 +74,8 @@ class CancelConfigButton(discord.ui.Button):
         
     async def callback(self, interaction: discord.Interaction) -> None:
         #self.panel.draft_config = self.panel.engine.cancel_config() # just logging
+        await interaction.response.defer()
+
         self.panel.finish("🚫 Draft changes cancelled; restored the last saved state.")
         master = self.panel.master_panel
         if master:
@@ -76,7 +83,7 @@ class CancelConfigButton(discord.ui.Button):
             master.frozen = False
             await master.interaction.edit_original_response(view= master)
             
-        await interaction.response.edit_message(view=self.panel)
+        await interaction.edit_original_response(view=self.panel)
 
 
 class EnableButton(discord.ui.Button):

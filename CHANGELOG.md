@@ -1,6 +1,60 @@
 # Changelog
 
-### LAST UPDATE DATE: 24/10/2026
+### LAST UPDATE DATE: 26/10/2026
+
+## Configurable automod actions
+
+- Added a serialized `actions` list to each component config. Action dictionaries include an action type and enabled state, with action-specific settings for timeouts and message/DM templates.
+- Added event placeholder values to automod responses so message and DM actions format their own templates when executed.
+- Added an Actions section to the component config panel, with separate edit modals for delete, timeout, DM, and channel-message actions. Changes remain draft-only until the config is saved.
+- Default component configs retain the existing delete-and-warning behavior.
+- The JSON config schema now requires an `actions` entry; configs from the previous schema are not migrated.
+
+## Bug fixes
+- Occasional fails due to unknown interactions
+- Added some interaction defers here and there
+- Fixed a bug where disabled components would suddenly get enabled when flagging a message.
+
+## Modified files:
+### [automod_cog.py](/automod_cog.py)
+- Modified `_handle_automod_response` method to now check whether an action is enabled or not. Adjustments to cater for the new method of handling response formatting.
+
+### [DiscordUI/buttons.py](/DiscordUI/buttons.py)
+- Modified `SaveConfigButton`. Added a fix to the previous code where master panel buttons did not refresh correctly.
+- Minor tweaks here and there.
+
+### [DiscordUI/modals.py](/DiscordUI/modals.py)
+- Modified `EditGeneralModal` class. Removed the option of modify the response template, since the response templates now are tied to the DM or Message actions.
+- Added `BaseBotActionConfigModal`, `EditDeleteActionModal`, `EditTimeoutActionModal`, `BaseTemplateActionModal`, `EditDMActionModal`, `EditMessageActionModal`.
+
+### [DiscordUI/views.py](/DiscordUI/views.py)
+- Modified `AutomodComponentPanelView`.
+    - Modified the constructor:
+        - Added `self.action_modal_classes` which serves as a modal type map.
+        - Added `self.action_displays` which serves as a map for respective TextDisplays 
+        - Added `self.action_buttons` which serves as a map for respective edit Buttons for the bot actions.
+    - Modified `build_container` method to add the text display and buttons for the bot actions.
+    - Adjusted `refresh_display` method to cater for bot actions.
+    - Added `set_action_config` method. Not sure what it does, thanks AI for documenting this.
+
+### [src/automod_models.py](/src/automod_models.py)
+- Modified `AutomodResponse` dataclass.
+    - Added a `response_values` attribute. Serves as a kwarg map to fill placeholders in response templates.
+- Modified `BotAction` dataclass.
+    - Added an `enabled` attribute.
+    - Added `to_dict` and `from_dict` methods which should be implemented by inheriting classes.
+    - Added `list_from_dict` method, which converts a list of dictionaries into a list of bot actions
+- Modified `DeleteAction`, `DMAction`, `TimeoutAction` and `MessageAction` classes. Implemented the `to_dict` and `from_dict` methods. Also added default values to each attribute.
+    - Added `format_response` method for `DMAction` and `MessageAction`.
+- Modified `BaseAutomodComponentConfig` class.
+    - removed `message_response_template` since it is now tied to DM and Message actions.
+    - Added `actions` attribute which is a list of bot actions that the automod will execute.
+    - removed `format_response` method for the same reason as `message_response_template`
+
+### [src/automod_components/image_rate_limiter.py](/src/automod_components/image_rate_limiter.py) and [src/automod_components/reply_chain_prevention](/src/automod_components/reply_chain_prevention.py)
+- Did the necessary adjustments to match the updated base classes and dataclasses.
+
+### PREVIOUS UPDATE DATE: 24/10/2026
 
 ## Brief summary
 
@@ -142,5 +196,4 @@ This one is a big one that required modifying a lot of files, primarily within t
     - Fixed a typo in `to_dict` about the `logging_channel` attribute.
 - Modified `ImageRateLimiterComponent`:
     - Did a change to the order of the parameters in the constructor. I initially did this to make it simpler for some sort of parity. But I'm realizing that this change could perhaps be undone and the `create` method be added as an abstract class to the base class to force a consistent way of creating a component. This change should perhaps be reviewed and considered in the future.
-
 

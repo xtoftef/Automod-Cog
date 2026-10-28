@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
-from typing import ClassVar, TypeVar, Generic, Type, Self, Any, Literal, LiteralString, cast
+from typing import ClassVar, TypeVar, Generic, Type, Self, Any, Literal
 
 from discord.abc import GuildChannel
 from discord import Guild, Message, Member
@@ -10,7 +10,7 @@ from discord.channel import (
     TextChannel,StageChannel, VoiceChannel, ForumChannel, CategoryChannel
 )
 
-from utils import OrderedSet
+from utils import OrderedSet, safe_format
 
 VALID_AUTOMOD_CHANNELS = (TextChannel, StageChannel, VoiceChannel)
 
@@ -23,6 +23,7 @@ class AutomodResponse:
     reason : str
     actions : list[BotAction] | None # Actions that the bot should perform regarding the flagged message/user
     log_to : str | None # Channel ID
+    response_values: dict[str, str | int | float] = field(default_factory=dict)
     
 @dataclass
 class AutomodLog:
@@ -37,18 +38,64 @@ class AutomodLog:
 
 @dataclass
 class BotAction:
-      # Should be a string literal
+    enabled: bool = field(default=True, kw_only=True)
+
     @property
     @abstractmethod
     def action_type(self) -> Literal['delete', 'timeout', 'dm', 'message']:
         pass
 
+    @abstractmethod
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this action config for JSON storage."""
+
+    @classmethod
+    def from_dict(cls, action_dict: dict[str, Any]) -> BotAction:
+        """Deserialize an action config using its action_type discriminator."""
+        if not isinstance(action_dict, dict):
+            raise ValueError("BotAction.from_dict expects a dictionary.")
+        action_type = action_dict.get("action_type")
+        if not isinstance(action_type, str):
+            raise ValueError("Action dictionary must include a string 'action_type'.")
+        action_class = BOT_ACTION_TYPES.get(action_type)
+        if action_class is None:
+            raise ValueError(f"Unknown automod action type: {action_type!r}")
+        return action_class.from_dict(action_dict)
+
+    @classmethod
+    def list_from_dict(cls, actions_data: Any) -> list[BotAction]:
+        """Deserialize a unique list of action configurations."""
+        if not isinstance(actions_data, list) or not all(
+            isinstance(action, dict) for action in actions_data
+        ):
+            raise ValueError("Config 'actions' must be a list of action dictionaries.")
+        actions = [cls.from_dict(action) for action in actions_data]
+        action_types = [action.action_type for action in actions]
+        if len(action_types) != len(set(action_types)):
+            raise ValueError("Config 'actions' cannot contain duplicate action types.")
+        return actions
+
+    @staticmethod
+    def _read_enabled(action_dict: dict[str, Any]) -> bool:
+        enabled = action_dict.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("Action 'enabled' must be a boolean.")
+        return enabled
 
 @dataclass
 class DeleteAction(BotAction):
     @property
-    def action_type(self): return 'delete'
-    
+    def action_type(self) -> Literal['delete']:
+        return 'delete'
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"action_type": self.action_type, "enabled": self.enabled}
+
+    @classmethod
+    def from_dict(cls, action_dict: dict[str, Any]) -> DeleteAction:
+        if action_dict.get("action_type") != "delete":
+            raise ValueError("DeleteAction requires action_type='delete'.")
+        return cls(enabled=cls._read_enabled(action_dict))
 
 
 @dataclass
@@ -58,33 +105,120 @@ class TimeoutAction(BotAction):
         duration (int) : Time in minutes for how long the timeout lasts
         reason (str) : The reason shown in the audit log
     """
-    duration: int
-    reason: str
+    duration: int = 60
+    reason: str = "Automod rule triggered"
 
     @property
-    def action_type(self): return 'timeout'
+    def action_type(self) -> Literal['timeout']:
+        return 'timeout'
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action_type": self.action_type,
+            "enabled": self.enabled,
+            "duration": self.duration,
+            "reason": self.reason,
+        }
+
+    @classmethod
+    def from_dict(cls, action_dict: dict[str, Any]) -> TimeoutAction:
+        if action_dict.get("action_type") != "timeout":
+            raise ValueError("TimeoutAction requires action_type='timeout'.")
+        duration = action_dict.get("duration")
+        reason = action_dict.get("reason")
+        if type(duration) is not int or duration < 1:
+            raise ValueError("Timeout action 'duration' must be a positive integer.")
+        if not isinstance(reason, str):
+            raise ValueError("Timeout action 'reason' must be a string.")
+        return cls(
+            enabled=cls._read_enabled(action_dict),
+            duration=duration,
+            reason=reason,
+        )
 
 
 @dataclass
 class DMAction(BotAction):
-    formatted_message_response: str
+    response_template: str = "Please follow the server rules, <@{user_id}>."
 
     @property
-    def action_type(self): return 'dm'
+    def action_type(self) -> Literal['dm']:
+        return 'dm'
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action_type": self.action_type,
+            "enabled": self.enabled,
+            "response_template": self.response_template,
+        }
+
+    @classmethod
+    def from_dict(cls, action_dict: dict[str, Any]) -> DMAction:
+        if action_dict.get("action_type") != "dm":
+            raise ValueError("DMAction requires action_type='dm'.")
+        response_template = action_dict.get("response_template")
+        if not isinstance(response_template, str):
+            raise ValueError("DM action 'response_template' must be a string.")
+        return cls(
+            enabled=cls._read_enabled(action_dict),
+            response_template=response_template,
+        )
+
+    def format_response(self, values: dict[str, str | int | float]) -> str:
+        return safe_format(
+            self.response_template,
+            values,
+            "Please follow the server rules, <@{user_id}>.",
+        )
 
 
 @dataclass
 class MessageAction(BotAction):
     """Sends a message in the channel triggered"""
-    formatted_message_response: str
+    response_template: str = "<@{user_id}>, please follow the server rules."
 
     @property
-    def action_type(self): return 'message'
+    def action_type(self) -> Literal['message']:
+        return 'message'
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action_type": self.action_type,
+            "enabled": self.enabled,
+            "response_template": self.response_template,
+        }
+
+    @classmethod
+    def from_dict(cls, action_dict: dict[str, Any]) -> MessageAction:
+        if action_dict.get("action_type") != "message":
+            raise ValueError("MessageAction requires action_type='message'.")
+        response_template = action_dict.get("response_template")
+        if not isinstance(response_template, str):
+            raise ValueError("Message action 'response_template' must be a string.")
+        return cls(
+            enabled=cls._read_enabled(action_dict),
+            response_template=response_template,
+        )
+
+    def format_response(self, values: dict[str, str | int | float]) -> str:
+        return safe_format(
+            self.response_template,
+            values,
+            "<@{user_id}>, please follow the server rules.",
+        )
+
+
+BOT_ACTION_TYPES: dict[str, type[BotAction]] = {
+    "delete": DeleteAction,
+    "timeout": TimeoutAction,
+    "dm": DMAction,
+    "message": MessageAction,
+}
 
 @dataclass
 class BaseAutomodComponentConfig(ABC):
     COMPONENT_KEY: ClassVar[str] = ""
-    RESPONSE_PLACEHOLDERS: ClassVar[tuple[str, ...]] = ("user_id",) # placeholders usable in message_response_template
+    RESPONSE_PLACEHOLDERS: ClassVar[tuple[str, ...]] = ("user_id",) # Available action-template placeholders
     enabled : bool
     guild_id : str # guild for which the config belongs
     is_global : bool # whether or not the automod affects all the channels of a guild
@@ -92,7 +226,7 @@ class BaseAutomodComponentConfig(ABC):
     ignored_channels : OrderedSet # Does nothing if is_global is False
     logging_channel : str | None # channel id | channel where automod logs are sent.
     ignored_roles : OrderedSet # roles unaffected by the automod
-    message_response_template : str # Template that will be formatted whenever the bot will post it
+    actions: list[BotAction]
 
     @classmethod
     @abstractmethod
@@ -107,10 +241,6 @@ class BaseAutomodComponentConfig(ABC):
     @abstractmethod
     def from_dict(cls, config_dict: dict) -> Self:
         "Attempts to format the dictionary into the dataclass. Raises ValueError if the dictionary passed is not in the right format."
-
-    @abstractmethod
-    def format_response(self, user_id: str) -> str:
-        "Formats the string into a response ready to be sent by the bot"   
 
     @abstractmethod
     def format_unique_config_display(self) -> str:
@@ -205,8 +335,10 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
             for channel in guild.channels:
                 if self.is_channel_watched(channel):
                     self.add_manager(str(channel.id))
+            print(f"Enabling the helpers for {type(self)}")
         else:
             # Clears all channel helpers if component is disabled.
+            print(f"Disabling the helpers for {type(self)}")
             self.channels.clear()
 
         return self.config.enabled
@@ -239,7 +371,10 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
 
     async def process_message(self, guild: Guild, channel: GuildChannel, message: Message) -> AutomodResponse:
         "Runs shared validity checks before dispatching to the component-specific handler."
-        if str(channel.guild.id) != str(guild.id):
+        if not self.config.enabled:
+            return AutomodResponse(False, "Automod Component is disabled", None, None)
+
+        elif str(channel.guild.id) != str(guild.id):
             return AutomodResponse(False, "Channel does not belong to the provided guild", None, None)
 
         channel_manager = self.get_manager(str(channel.id))

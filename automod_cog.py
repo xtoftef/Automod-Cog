@@ -52,6 +52,8 @@ class AutomodCog(commands.Cog):
         dm_action, delete_action, message_action, timeout_action = None , None, None , None
 
         for action in (response.actions or []):
+            if not action.enabled:
+                continue
             try:
                 if action.action_type == 'delete':
                     action = cast(DeleteAction, action)
@@ -74,8 +76,8 @@ class AutomodCog(commands.Cog):
                 elif action.action_type == 'message':
                     action = cast(MessageAction, action)
                     # 2. Send a temporary warning notice
-                    warning = await message.channel.send(
-                        action.formatted_message_response,
+                    await message.channel.send(
+                        action.format_response(response.response_values),
                         delete_after=5.0,  # Automatically cleans up warning notice after 5 seconds
                     )
                     message_action = action
@@ -83,7 +85,9 @@ class AutomodCog(commands.Cog):
                 elif action.action_type == 'dm':
                     action = cast(DMAction, action)
 
-                    await message.author.send(action.formatted_message_response)
+                    await message.author.send(
+                        action.format_response(response.response_values)
+                    )
                     dm_action = action
 
             except discord.NotFound:

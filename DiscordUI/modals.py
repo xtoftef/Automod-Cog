@@ -8,6 +8,10 @@ __all__ = [
     "EditChannelsAndRolesModal",
     "EditImageRateLimiterSpecificModal",
     "EditChainPreventionSpecificModal",
+    "EditDeleteActionModal",
+    "EditTimeoutActionModal",
+    "EditDMActionModal",
+    "EditMessageActionModal",
     "unique_modal_router"
 ]
 
@@ -21,7 +25,14 @@ from abc import ABC, abstractmethod
 
 import discord
 from discord.enums import ChannelType
-from src.automod_models import BaseAutomodComponentConfig
+from src.automod_models import (
+    BaseAutomodComponentConfig,
+    BotAction,
+    DeleteAction,
+    TimeoutAction,
+    DMAction,
+    MessageAction,
+)
 from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
 from src.automod_components.reply_chain_prevention import ReplyChainPreventionComponentConfig
 
@@ -239,13 +250,6 @@ class EditGeneralModal(BaseConfigEditModal):
         
         self.is_global_input = discord.ui.Checkbox(default=config.is_global)
 
-        self.response_template_input = discord.ui.TextInput(
-            default=config.message_response_template,
-            placeholder="Message sent when this automod triggers",
-            required=False,
-            style=discord.TextStyle.paragraph,
-            max_length=2000,
-        )
         self.add_item(
             discord.ui.Label(
                 text="Affects all channels (global)",
@@ -253,22 +257,173 @@ class EditGeneralModal(BaseConfigEditModal):
                 component=self.is_global_input,
             )
         )
-        self.add_item(
-            discord.ui.Label(
-                text="Response message",
-                description=("Placeholders: " + ", ".join(
-                    f"{{{placeholder}}}" for placeholder in config.RESPONSE_PLACEHOLDERS
-                ))[:100], # Discord's label description limit
-                component=self.response_template_input,
-            )
-        )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         self.panel.draft_config.is_global = self.is_global_input.value
-        self.panel.draft_config.message_response_template = (
-            self.response_template_input.value
-        )
         await self.refresh_panel(interaction)
+
+
+class BaseBotActionConfigModal(BaseConfigEditModal):
+    """Common enabled-state editing and draft handling for an individual action."""
+
+    def __init__(
+        self,
+        panel: AutomodComponentConfigPanelView,
+        action: BotAction,
+        *,
+        title: str,
+    ) -> None:
+        super().__init__(panel, title=title)
+        self.action = action
+        self.enabled_input = discord.ui.Checkbox(default=action.enabled)
+        self.add_item(
+            discord.ui.Label(
+                text="Action enabled",
+                component=self.enabled_input,
+            )
+        )
+
+    async def save_action(self, interaction: discord.Interaction) -> None:
+        self.action.enabled = self.enabled_input.value
+        self.panel.set_action_config(self.action)
+        await self.refresh_panel(interaction)
+
+
+class EditDeleteActionModal(BaseBotActionConfigModal):
+    def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
+        action = next(
+            (
+                existing for existing in panel.draft_config.actions
+                if existing.action_type == "delete"
+            ),
+            DeleteAction(),
+        )
+        super().__init__(panel, action, title="Configure Delete Action")
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.save_action(interaction)
+
+
+class EditTimeoutActionModal(BaseBotActionConfigModal):
+    def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
+        action = next(
+            (
+                existing for existing in panel.draft_config.actions
+                if existing.action_type == "timeout"
+            ),
+            TimeoutAction(),
+        )
+        if not isinstance(action, TimeoutAction):
+            raise TypeError("Stored timeout action has an invalid type.")
+        super().__init__(panel, action, title="Configure Timeout Action")
+        self.duration_input = discord.ui.TextInput(
+            default=str(action.duration),
+            placeholder="1 to 40320 minutes",
+            required=True,
+            max_length=5,
+        )
+        self.reason_input = discord.ui.TextInput(
+            default=action.reason,
+            placeholder="Reason shown in the audit log",
+            required=True,
+            max_length=300,
+        )
+        self.add_item(discord.ui.Label(
+            text="Duration (minutes)",
+            component=self.duration_input,
+        ))
+        self.add_item(discord.ui.Label(
+            text="Audit log reason",
+            component=self.reason_input,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            duration = int(self.duration_input.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "Timeout duration must be a whole number of minutes.",
+                ephemeral=True,
+            )
+            return
+        if not 1 <= duration <= 40320:
+            await interaction.response.send_message(
+                "Timeout duration must be between 1 and 40320 minutes.",
+                ephemeral=True,
+            )
+            return
+        if not isinstance(self.action, TimeoutAction):
+            raise TypeError("Stored timeout action has an invalid type.")
+        self.action.duration = duration
+        self.action.reason = self.reason_input.value
+        await self.save_action(interaction)
+
+
+class BaseTemplateActionConfigModal(BaseBotActionConfigModal):
+    def __init__(
+        self,
+        panel: AutomodComponentConfigPanelView,
+        action: DMAction | MessageAction,
+        *,
+        title: str,
+    ) -> None:
+        super().__init__(panel, action, title=title)
+        self.template_input = discord.ui.TextInput(
+            default=action.response_template,
+            placeholder="Template sent when this automod triggers",
+            required=True,
+            style=discord.TextStyle.paragraph,
+            max_length=2000,
+        )
+        placeholders = ", ".join(
+            f"{{{placeholder}}}"
+            for placeholder in panel.draft_config.RESPONSE_PLACEHOLDERS
+        )
+        self.add_item(discord.ui.Label(
+            text="Response template",
+            description=f"Available placeholders: {placeholders}"[:100],
+            component=self.template_input,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if not isinstance(self.action, (DMAction, MessageAction)):
+            raise TypeError("Stored template action has an invalid type.")
+        self.action.response_template = self.template_input.value
+        await self.save_action(interaction)
+
+
+class EditDMActionModal(BaseTemplateActionConfigModal):
+    def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
+        action = next(
+            (
+                existing for existing in panel.draft_config.actions
+                if existing.action_type == "dm"
+            ),
+            DMAction(),
+        )
+        if not isinstance(action, DMAction):
+            raise TypeError("Stored DM action has an invalid type.")
+        super().__init__(panel, action, title="Configure DM Action")
+
+
+class EditMessageActionModal(BaseTemplateActionConfigModal):
+    def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
+        action = next(
+            (
+                existing for existing in panel.draft_config.actions
+                if existing.action_type == "message"
+            ),
+            MessageAction(
+                response_template=getattr(
+                    panel.draft_config,
+                    "DEFAULT_MSG_RESPONSE",
+                    MessageAction.response_template,
+                )
+            ),
+        )
+        if not isinstance(action, MessageAction):
+            raise TypeError("Stored message action has an invalid type.")
+        super().__init__(panel, action, title="Configure Channel Message Action")
 
 class EditChannelsAndRolesModal(BaseConfigEditModal):
     "General modal for modifying affected channel and roles. Shared by all automod components"

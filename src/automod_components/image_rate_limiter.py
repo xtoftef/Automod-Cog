@@ -7,9 +7,8 @@ import time
 
 from src.automod_models import (
     AutomodResponse,
+    BotAction,
     DeleteAction,
-    TimeoutAction,
-    DMAction,
     MessageAction,
     OrderedSet,
     BaseAutomodComponentConfig,
@@ -17,8 +16,6 @@ from src.automod_models import (
     BaseAutomodComponent,
     BaseChannelManager
 )
-from utils import safe_format
-
 # ==============================================================================================
 # ATTACHMENT MESSAGE WINDOW LIMITER
 # ==============================================================================================
@@ -38,7 +35,6 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
     max_images : int
     window_size : int # messages 
     duration : float
-    message_response_template : str
 
     @classmethod
     def get_default(cls, guild_id: str) -> ImageRateLimiterComponentConfig:
@@ -50,11 +46,13 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             ignored_channels= OrderedSet(),
             logging_channel = None,
             ignored_roles= OrderedSet(),
+            actions=[
+                DeleteAction(),
+                MessageAction(response_template=cls.DEFAULT_MSG_RESPONSE),
+            ],
             max_images= 3,
             window_size= 10,
             duration= 120,
-            message_response_template= ImageRateLimiterComponentConfig.DEFAULT_MSG_RESPONSE
-            
         )
 
     def to_dict(self) -> dict:
@@ -66,7 +64,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             "ignored_channels": list(self.ignored_channels),
             "logging_channel" : self.logging_channel,
             "ignored_roles": list(self.ignored_roles),
-            "message_response_template": self.message_response_template,
+            "actions": [action.to_dict() for action in self.actions],
             "max_images": self.max_images,
             "window_size": self.window_size,
             "duration": self.duration,
@@ -85,6 +83,7 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             "ignored_channels",
             "logging_channel",
             "ignored_roles",
+            "actions",
             "max_images",
             "window_size",
             "duration",
@@ -101,27 +100,10 @@ class ImageRateLimiterComponentConfig(BaseAutomodComponentConfig):
             ignored_channels=OrderedSet(config_dict.get("ignored_channels", [])),
             logging_channel = config_dict.get("logging_channel", None),
             ignored_roles=OrderedSet(config_dict.get("ignored_roles", [])),
+            actions=BotAction.list_from_dict(config_dict["actions"]),
             max_images=int(config_dict["max_images"]),
             window_size=int(config_dict["window_size"]),
             duration=float(config_dict["duration"]),
-            message_response_template=str(
-                config_dict.get(
-                    "message_response_template",
-                    config_dict.get("formatted_message_response", ImageRateLimiterComponentConfig.DEFAULT_MSG_RESPONSE),
-                )
-            ),
-        )
-
-    def format_response(self, user_id: str) -> str:
-        return safe_format(
-            self.message_response_template,
-            {
-                "user_id": user_id,
-                "max_images": self.max_images,
-                "window_size": self.window_size,
-                "duration": self.duration,
-            },
-            ImageRateLimiterComponentConfig.DEFAULT_MSG_RESPONSE,
         )
 
     def format_unique_config_display(self) -> str:
@@ -231,11 +213,14 @@ class ImageRateLimiterComponent(
             return AutomodResponse(
                 True,
                 "Maximum number of images exceeded",
-                [
-                    DeleteAction(),
-                    MessageAction(self.config.format_response(str(user.id)))
-                ],
-                self.config.logging_channel
+                list(self.config.actions),
+                self.config.logging_channel,
+                {
+                    "user_id": str(user.id),
+                    "max_images": self.config.max_images,
+                    "window_size": self.config.window_size,
+                    "duration": self.config.duration,
+                },
             )
 
         # Normal msg that doesn't trigger the automod
@@ -246,4 +231,3 @@ class ImageRateLimiterComponent(
                 None,
                 None
             )
-

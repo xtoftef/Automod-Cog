@@ -82,12 +82,12 @@ class AutomodEngine():
             guild_components = self.cache[guild_id]
             component  = guild_components[comp_key]
         except KeyError as e:
-            return False # component not found, not enabled
+            return False # component not found, disabled kinda
 
-        # 2. Check if disabled
+        # 2. Check if enabled
         cfg : BaseAutomodComponentConfig = component.config
         if not cfg.enabled:
-            return False #component already enabled
+            return False #component already disabled
         
         cfg.enabled = False
         # 3. Update the config + initialize

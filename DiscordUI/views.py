@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Literal
 from .ui_utils import *
 from .modals import *
 from .buttons import *
-from src.automod_models import BaseAutomodComponentConfig
+from src.automod_models import BaseAutomodComponentConfig, BotAction
 
 if TYPE_CHECKING:
     from src.automod_engine import AutomodEngine
@@ -40,6 +40,24 @@ class AutomodComponentConfigPanelView(discord.ui.LayoutView):
         self.sensitivity_button = OpenEditModalButton(
             self, "Edit", unique_modal_router(config)
         )
+        action_modal_classes = {
+            "delete": EditDeleteActionModal,
+            "timeout": EditTimeoutActionModal,
+            "dm": EditDMActionModal,
+            "message": EditMessageActionModal,
+        }
+        self.action_displays = {
+            action_type: discord.ui.TextDisplay("")
+            for action_type in action_modal_classes
+        }
+        self.action_buttons = {
+            action_type: OpenEditModalButton(
+                self,
+                "Edit",
+                lambda panel, modal_class=modal_class: modal_class(panel),
+            )
+            for action_type, modal_class in action_modal_classes.items()
+        }
         self.save_button = SaveConfigButton(self)
         self.cancel_button = CancelConfigButton(self)
         self.misc_display = discord.ui.TextDisplay("")
@@ -90,6 +108,18 @@ class AutomodComponentConfigPanelView(discord.ui.LayoutView):
                 accessory=self.sensitivity_button,
             ),
             discord.ui.Separator(),
+            discord.ui.TextDisplay("## Actions"),
+            *(
+                item
+                for action_type, display in self.action_displays.items()
+                for item in (
+                    discord.ui.Section(
+                        display,
+                        accessory=self.action_buttons[action_type],
+                    ),
+                )
+            ),
+            discord.ui.Separator(),
             self.status_display,
             discord.ui.ActionRow(self.save_button, self.cancel_button),
             accent_colour=0xCBD4DE,
@@ -97,14 +127,10 @@ class AutomodComponentConfigPanelView(discord.ui.LayoutView):
 
     def refresh_display(self) -> None:
         config = self.draft_config
-        response_template = discord.utils.escape_mentions(
-            discord.utils.escape_markdown(config.message_response_template)
-        ) or "*Default*"
         self.misc_display.content = (
             "## Miscellaneous\n"
             f"**Affects ALL channels (global):** "
-            f"`{'YES' if config.is_global else 'NO'}`\n"
-            f"**Response Message:** {response_template}"
+            f"`{'YES' if config.is_global else 'NO'}`"
         )
         self.targets_display.content = (
             "## Channels and Roles\n"
@@ -119,6 +145,32 @@ class AutomodComponentConfigPanelView(discord.ui.LayoutView):
         self.sensitivity_display.content = (
             f"## Automod Sensitivity\n{config.format_unique_config_display()}"     
         )
+        action_by_type = {
+            action.action_type: action
+            for action in config.actions
+        }
+        action_names = {
+            "delete": "Delete message",
+            "timeout": "Timeout member",
+            "dm": "DM user",
+            "message": "Send channel message",
+        }
+        for action_type, name in action_names.items():
+            action = action_by_type.get(action_type)
+            if action is None:
+                state = "🟨 **INEXISTENT**"
+            else:
+                state = "✅ **ENABLED**" if action.enabled else "❌ **DISABLED**"
+            self.action_displays[action_type].content = f"**{name}**\nState: {state}"
+
+    def set_action_config(self, action: BotAction) -> None:
+        for index, current_action in enumerate(self.draft_config.actions):
+            if current_action.action_type == action.action_type:
+                self.draft_config.actions[index] = action
+                break
+        else:
+            self.draft_config.actions.append(action)
+        self.refresh_display()
 
     def finish(self, status: str) -> None:
         self.refresh_display()
@@ -127,6 +179,7 @@ class AutomodComponentConfigPanelView(discord.ui.LayoutView):
             self.general_button,
             self.targets_button,
             self.sensitivity_button,
+            *self.action_buttons.values(),
             self.save_button,
             self.cancel_button,
         ):
@@ -194,6 +247,7 @@ class MasterPanelView(discord.ui.LayoutView):
         section : discord.ui.Section = self.segments[component_key]['section']
         old_button = action_row.children[0]
         action_row.remove_item(old_button)
+        print("Removing", old_button.id)
         match new_state:
             case 'enabled':
                 
@@ -202,6 +256,7 @@ class MasterPanelView(discord.ui.LayoutView):
                     edit_button = action_row.children[0]
                     #remove the disable button, replace it with enable button and then reinsert the edit button to maintain order.
                     action_row.remove_item(edit_button)
+                    print("Removing", edit_button.id)
                     if isinstance(edit_button, OpenConfigViewButton):
                         cfg = edit_button.cfg
                     else: raise Exception("Somehow it's not a OpenConfigViewButton, which is not meant to happen there.")
@@ -215,6 +270,7 @@ class MasterPanelView(discord.ui.LayoutView):
                 action_row.add_item(new_button).add_item(
                     edit_button
                 )
+                print("Adding", new_button.id)
                     
             case 'disabled':
                 if previous_state != 'inexistent':
@@ -222,6 +278,7 @@ class MasterPanelView(discord.ui.LayoutView):
                     edit_button = action_row.children[0]
                     #remove the disable button, replace it with enable button and then reinsert the edit button to maintain order.
                     action_row.remove_item(edit_button)
+                    print("Removing", edit_button.id)
                     if isinstance(edit_button, OpenConfigViewButton):
                         cfg = edit_button.cfg
                     else: raise Exception("Somehow it's not a OpenConfigViewButton, which is not meant to happen there.")
@@ -235,14 +292,17 @@ class MasterPanelView(discord.ui.LayoutView):
                 action_row.add_item(new_button).add_item(
                     edit_button
                 )
+                print("Adding", new_button.id)
                     
             case 'inexistent':
                 cfg = None
                 edit_button = action_row.children[0]
                 action_row.remove_item(edit_button)
+                print("Removing", edit_button.id)
                 # Replace the 2 buttons with a Create button
                 new_button = CreateConfigViewButton(self, "Create", str(self.guild.id),component_key, self.engine)
                 action_row.add_item(new_button)
+                print("Adding", new_button.id)
                     
         # remove old section text with the updated one
         section.remove_item(section.children[0]).add_item(
