@@ -2,6 +2,7 @@
 Master config file for the cog (does not care about the config of the bot itself)
 """
 from typing import TYPE_CHECKING, Literal, TypedDict
+from utils import get_env_bool
 
 from src.memory_manager_implementations import JSONMemoryManager
 from src.automod_components.image_rate_limiter import ImageRateLimiterComponent, ImageRateLimiterComponentConfig
@@ -29,7 +30,7 @@ class ComponentDict(TypedDict):
 # CONFIG VARIABLES/CONSTANTS
 # =============================================================================
 
-TEST = True
+TEST = get_env_bool("TESTING", True)
 
 MEMORY = JSONMemoryManager("guild_data.json")
 

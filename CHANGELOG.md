@@ -1,5 +1,10 @@
 # Changelog
 
+### LAST UPDATE DATE: 29/10/2026
+- Added internal logging. The internal logging is ready. HOWEVER, it was not implemented within the entire system. I only added it here and there withing automod_cog.py though we would find it useful to add more logging lines on the fly. The logger is set to save logs to `automod_debug.log` and `logger.debug()` lines only show up if the system is ran on test mode (`TEST` variable in your `.env` file). [logger_instructions.md](/dev_notes/logger_instructions.md) contains more instructions on the logging.
+- Added a `/ping` command for the bot. Might be removed in the future.
+- Added a `/stats` command for the bot. Might be removed in the future.
+
 ### LAST UPDATE DATE: 26/10/2026
 
 ## Configurable automod actions
