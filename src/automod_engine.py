@@ -69,7 +69,7 @@ class AutomodEngine():
         return True
 
     async def disable_component(self, guild: Guild, comp_key: str):
-        "Enables the component for that guild"
+        "Disables the component for that guild"
         from config import ENGINE_CONFIG
 
         guild_id = str(guild.id)

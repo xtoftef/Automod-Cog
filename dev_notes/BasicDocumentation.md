@@ -181,3 +181,21 @@ You will also notice a folder [DiscordUI](/DiscordUI/). This folder contains all
 
 
 Which is why you'll see a folder known as . This folder contains
+
+# data_gathering/
+Heading to [data_gathering](/src/data_gathering/).
+This is the data gathering feature: it watches specific channels for a defined period and counts, per day (UTC) and per user, how many gifs, images and videos were sent. It's meant to help pick sensible limits for automods like the planned Total Attachment Limit. It's independent from the engine, the cog simply feeds it the messages in `on_message` (before the engine, so messages deleted by the automod still count) and in `on_message_edit` (link embeds like tenor gifs are usually added by Discord through an edit).
+- [media_stats_models.py](/src/data_gathering/media_stats_models.py): `MediaCounts`, `WatchSession`, `DaySummary` and the `BaseMediaStatsStorage` abstract class.
+- [media_stats_storage.py](/src/data_gathering/media_stats_storage.py): `JSONMediaStatsStorage`, saved to `media_stats.json`. Counts are cached and written every 60 seconds (and on cog unload) instead of on every message.
+- [media_stats_collector.py](/src/data_gathering/media_stats_collector.py): media classification, watch sessions, per-day summaries and CSV export.
+
+NOTE: these files use `logging.getLogger("automod.data_gathering...")` instead of `get_logger` from [logger.py](/logger.py), since `logger.py` imports `config.py`, which imports the storage (circular import). The namespace is the same, so the output is identical.
+
+Stored format (`stats` follows format.txt):
+```json
+{
+  "watches": {"<channel_id>": {"guild_id": "...", "started_at": 0.0, "ends_at": 0.0}},
+  "stats": {"<channel_id>": {"2026-10-31": {"<user_id>": {"gif": 0, "image": 0, "video": 0}}}}
+}
+```
+Commands: `media-stats-watch` (channel, days), `media-stats-unwatch`, `media-stats-view` (daily totals, avg/median/max per user), `media-stats-export` (CSV file for spreadsheets).

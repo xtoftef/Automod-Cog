@@ -184,6 +184,8 @@ cython_debug/
 dummy_classes.py
 guild_data.json
 guild_data.json.tmp
+media_stats.json
+media_stats.json.tmp
 dummy_memory.json
 dummy_memory.json.tmp
 temp.py

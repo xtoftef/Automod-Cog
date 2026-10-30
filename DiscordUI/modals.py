@@ -502,7 +502,9 @@ class EditChannelsAndRolesModal(BaseConfigEditModal):
         )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        self.panel.draft_config.logging_channel = str(self.logging_channel_input.values[0].id)
+        # The select allows 0 values, which clears the logging channel
+        logging_channels = self.logging_channel_input.values
+        self.panel.draft_config.logging_channel = str(logging_channels[0].id) if logging_channels else None
         self.panel.draft_config.affected_channels = type(
             self.panel.draft_config.affected_channels
         )(str(channel.id) for channel in self.affected_channels_input.values)

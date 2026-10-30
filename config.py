@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 from utils import get_env_bool
 
 from src.memory_manager_implementations import JSONMemoryManager
+from src.data_gathering.media_stats_storage import JSONMediaStatsStorage
 from src.automod_components.image_rate_limiter import ImageRateLimiterComponent, ImageRateLimiterComponentConfig
 from src.automod_components.reply_chain_prevention import ReplyChainPreventionComponent, ReplyChainPreventionComponentConfig
 from DiscordUI.modals import EditImageRateLimiterSpecificModal, EditChainPreventionSpecificModal
@@ -15,6 +16,7 @@ from DiscordUI.modals import EditImageRateLimiterSpecificModal, EditChainPrevent
 class CogConfigDict(TypedDict):
     engine : EngineConfigDict
     memory: BaseAutomodMemoryManager
+    media_stats_storage: BaseMediaStatsStorage
 
 class EngineConfigDict(TypedDict):
     components : dict[str,ComponentDict]
@@ -33,6 +35,8 @@ class ComponentDict(TypedDict):
 TEST = get_env_bool("TESTING", True)
 
 MEMORY = JSONMemoryManager("guild_data.json")
+
+MEDIA_STATS_STORAGE = JSONMediaStatsStorage("media_stats.json") # data gathering storage, kept apart from the configs
 
 ENGINE_CONFIG : EngineConfigDict = {
     "components" : {
@@ -55,11 +59,13 @@ ENGINE_CONFIG : EngineConfigDict = {
 COG_CONFIG : CogConfigDict = {
     "engine" : ENGINE_CONFIG,
     "memory" : MEMORY,
+    "media_stats_storage" : MEDIA_STATS_STORAGE,
 }
 
 if TYPE_CHECKING:
     from DiscordUI.modals import BaseComponentSpecificModal
     from src.automod_models import BaseAutomodComponentConfig, BaseAutomodComponent, BaseAutomodMemoryManager
+    from src.data_gathering.media_stats_models import BaseMediaStatsStorage
     
 
 # =============================================================================

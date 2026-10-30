@@ -68,7 +68,7 @@ async def main():
         print("Slash commands synced successfully.")
 
     # 2. Add Cogs & Adapters
-    automod_cog = AutomodCog(bot, COG_CONFIG['memory'])
+    automod_cog = AutomodCog(bot, COG_CONFIG['memory'], COG_CONFIG['media_stats_storage'])
     await bot.add_cog(automod_cog)
 
     # 3. Run Bot

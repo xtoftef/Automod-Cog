@@ -1,13 +1,17 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 
 from typing import cast, Literal, Optional
 from datetime import timedelta
+import io
 import discord
 
 
 from src.memory_manager_implementations import JSONMemoryManager
+from src.data_gathering.media_stats_models import BaseMediaStatsStorage
+from src.data_gathering.media_stats_storage import JSONMediaStatsStorage
+from src.data_gathering.media_stats_collector import MediaStatsCollector
 from src.automod_engine import AutomodEngine
 from src.automod_models import (
     BaseAutomodComponentConfig,BaseAutomodMemoryManager,
@@ -20,6 +24,7 @@ from logger import setup_automod_logging, get_logger
 
 DEFAULT_MEMORY = JSONMemoryManager("guild_data.json") # not using the config.py one since it's just a 
 # default that can be overriden when creating the cog object.
+DEFAULT_MEDIA_STATS_STORAGE = JSONMediaStatsStorage("media_stats.json")
 
 
 logger = get_logger("cog")
@@ -27,16 +32,34 @@ logger = get_logger("cog")
 class AutomodCog(commands.Cog):
     "you can implement the commands and logic here, it also still supports the on_message function."
 
-    def __init__(self, bot: commands.Bot, memory : BaseAutomodMemoryManager = DEFAULT_MEMORY ) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        memory : BaseAutomodMemoryManager = DEFAULT_MEMORY,
+        media_stats_storage : BaseMediaStatsStorage = DEFAULT_MEDIA_STATS_STORAGE
+    ) -> None:
         logger.debug("Booting up automod cog")
         super().__init__()
         setup_automod_logging()
-        self.bot = bot 
+        self.bot = bot
         self.automod_engine = AutomodEngine(memory, []) # NOTE: need to reset the list of guilds when the bot is ready.
+        self.media_stats = MediaStatsCollector(media_stats_storage) # data gathering, independent from the engine
         # you may modify the constructor if you see it needed
 
         logger.info("Automod Cog successfully initialized")
-        
+
+    async def cog_load(self) -> None:
+        self.flush_media_stats.start()
+
+    async def cog_unload(self) -> None:
+        self.flush_media_stats.cancel()
+        self.media_stats.flush()
+
+    @tasks.loop(seconds=60)
+    async def flush_media_stats(self):
+        "Writes the gathered media stats to the storage periodically instead of on every message."
+        self.media_stats.flush()
+
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -45,11 +68,22 @@ class AutomodCog(commands.Cog):
         if not isinstance(message.author, discord.Member):
             logger.debug(f"Ignoring message from member not found within a guild. User: {message.author.name}")
             return
+        # Recorded before the automod runs, so messages the automod deletes are still counted
+        self.media_stats.record_message(message)
+
         response = await self.automod_engine.engine_process_message(message)
 
         if response.flagged:
             logger.debug("Flagged an automod. Handling response.")
             await self._handle_automod_response(response, message)
+
+    @commands.Cog.listener()
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        """Link embeds (tenor gifs, image/video links) are usually added by Discord after the message was sent,
+        through an edit. Only those late embeds are recorded, attachments were already counted in on_message."""
+        if before.embeds or not after.embeds:
+            return
+        self.media_stats.record_message(after, attachments=False)
 
 
 
@@ -305,20 +339,20 @@ class AutomodCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         engine_components = [key for key in ENGINE_CONFIG["components"] if ENGINE_CONFIG["components"][key]["activate"]]
         if config_key not in engine_components:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"❌ Invalid config type selected."
             )
             return
 
 
         guild_id = str(interaction.guild_id)
-        if not guild_id or not interaction.guild: return await interaction.response.edit_message(content="This command can only be used in a guild")
+        if not guild_id or not interaction.guild: return await interaction.edit_original_response(content="This command can only be used in a guild")
         guild_configs = await self.automod_engine.get_guild_configs(guild_id)
         
         # Traverse through the list of config objects and retrieve the one matching the key
         cfg = next((config for config in guild_configs if config.COMPONENT_KEY == config_key), None)#guild_configs[config_key]
         if cfg: 
-            return await interaction.response.edit_message(
+            return await interaction.edit_original_response(
                 content=f"❌ Existing config found for `{config_key}`. Use `/config-update` to update the config."
             )
 
@@ -330,7 +364,7 @@ class AutomodCog(commands.Cog):
         
         cfg = ConfigClass.get_default(guild_id)
 
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             view=AutomodComponentConfigPanelView(
                 cfg, self.automod_engine, interaction.user.id, interaction.guild
             )
@@ -339,6 +373,97 @@ class AutomodCog(commands.Cog):
 
 
     
+    # ==============================================================================
+    # DATA GATHERING COMMANDS
+    # ==============================================================================
+    @app_commands.command(
+        name="media-stats-watch", description="Gather media stats (gifs, images, videos per user per day) in a channel."
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
+    async def media_stats_watch(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        days: app_commands.Range[int, 1, 90] = 7
+    ):
+        logger.info("Attempting `media-stats-watch` command.")
+        if not interaction.guild_id: return
+        session = self.media_stats.watch_channel(str(interaction.guild_id), str(channel.id), days)
+        await interaction.response.send_message(
+            f"📊 Gathering media stats in {channel.mention} until <t:{int(session.ends_at)}:F>.\n"
+            "-# Watching a channel again restarts the period, the stats gathered so far are kept.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="media-stats-unwatch", description="Stop gathering media stats in a channel."
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
+    async def media_stats_unwatch(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        logger.info("Attempting `media-stats-unwatch` command.")
+        self.media_stats.flush()
+        if self.media_stats.unwatch_channel(str(channel.id)):
+            await interaction.response.send_message(f"⏹️ Stopped gathering media stats in {channel.mention}.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ {channel.mention} is not being watched.", ephemeral=True)
+
+    @app_commands.command(
+        name="media-stats-view", description="View the daily media stats gathered in a channel."
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
+    async def media_stats_view(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        logger.info("Attempting `media-stats-view` command.")
+        session = self.media_stats.watches.get(str(channel.id))
+        if not session or session.guild_id != str(interaction.guild_id):
+            return await interaction.response.send_message(f"❌ No stats were gathered in {channel.mention}.", ephemeral=True)
+
+        is_active = self.media_stats.get_active_session(str(channel.id)) is not None
+        embed = discord.Embed(
+            title=f"Media stats: #{channel.name}",
+            description=(f"**Status:** 🟢 Watching, ends <t:{int(session.ends_at)}:R>" if is_active
+                         else f"**Status:** ⚪ Ended <t:{int(session.ends_at)}:R>"),
+            color=discord.Color.blue(),
+        )
+        summaries = self.media_stats.summarize_channel(str(channel.id))
+        for summary in summaries[:10]: # embeds are limited to 25 fields, last 10 days is plenty
+            embed.add_field(
+                name=summary.day,
+                value=(f"Users sending media: `{summary.users}`\n"
+                       f"Gif: `{summary.totals.gif}` | Image: `{summary.totals.image}` | Video: `{summary.totals.video}`\n"
+                       f"Per user - avg: `{summary.average_per_user:.1f}`, median: `{summary.median_per_user:g}`, max: `{summary.max_per_user}`"),
+                inline=False,
+            )
+        if not summaries:
+            embed.add_field(name="No data yet", value="No media was sent in the channel since it started being watched.")
+        elif len(summaries) > 10:
+            embed.set_footer(text=f"Showing the last 10 of {len(summaries)} days. Use /media-stats-export for everything.")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="media-stats-export", description="Export the gathered media stats of this server as a CSV file."
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
+    async def media_stats_export(self, interaction: discord.Interaction, channel: Optional[discord.TextChannel] = None):
+        logger.info("Attempting `media-stats-export` command.")
+        guild_id = str(interaction.guild_id)
+        channel_ids = [session.channel_id for session in self.media_stats.get_guild_sessions(guild_id)]
+        if channel:
+            channel_ids = [channel_id for channel_id in channel_ids if channel_id == str(channel.id)]
+        if not channel_ids:
+            return await interaction.response.send_message("❌ No stats were gathered for this selection.", ephemeral=True)
+
+        csv_string = self.media_stats.export_csv(channel_ids)
+        await interaction.response.send_message(
+            file=discord.File(io.BytesIO(csv_string.encode("utf-8")), filename=f"media_stats_{guild_id}.csv"),
+            ephemeral=True,
+        )
+
+
     # ==============================================================================
     # TEST COMMANDS
     # ==============================================================================
