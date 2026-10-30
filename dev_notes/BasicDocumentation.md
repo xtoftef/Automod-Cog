@@ -198,4 +198,29 @@ Stored format (`stats` follows format.txt):
   "stats": {"<channel_id>": {"2026-10-31": {"<user_id>": {"gif": 0, "image": 0, "video": 0}}}}
 }
 ```
-Commands: `media-stats-watch` (channel, days), `media-stats-unwatch`, `media-stats-view` (daily totals, avg/median/max per user), `media-stats-export` (CSV file for spreadsheets).
+Commands: `media-stats-watch` (channel, days), `media-stats-unwatch`, `media-stats-view` (daily totals, avg/median/max per user), `media-stats-export` (CSV file for spreadsheets). They're named `media-stats-*` so they don't get mixed up with the `/stats` command (bot ping/CPU/RAM).
+
+## What counts as what
+- Gif: `.gif` attachments, tenor/giphy embeds (`gifv`) and image link embeds whose url ends in `.gif`.
+- Image / Video: attachments with an `image/*` / `video/*` content type (guessed from the file name if Discord doesn't send one), plus image/video link embeds.
+- Not counted: stickers, other files (audio, text, etc.), rich embeds, messages sent by bots and text-only messages.
+- Every item counts, so a message with 3 images counts as 3 images.
+- Days are split at UTC midnight (`message.created_at`).
+
+Open questions about these choices are listed in `automod-to-do.txt`.
+
+## Watch sessions
+- Watching a channel that is already watched restarts the period. The stats gathered so far are kept.
+- Sessions are kept after they end (stopped early or expired). This is how `media-stats-view` and `media-stats-export` know which guild a channel's stats belong to.
+- Only text channels can be watched for now.
+
+## How it's wired in
+- [config.py](/config.py): `MEDIA_STATS_STORAGE` is created next to `MEMORY` and added to `COG_CONFIG` under `media_stats_storage`. To use another storage (sqlite, CSV...), implement `BaseMediaStatsStorage` and swap it there.
+- [bot.py](/bot.py): passes `COG_CONFIG['media_stats_storage']` to `AutomodCog`.
+- [automod_cog.py](/automod_cog.py): the constructor creates `self.media_stats` (a `MediaStatsCollector`). `cog_load` starts the `flush_media_stats` loop (every 60 seconds), and `cog_unload` stops it and saves one last time.
+- [.gitignore](/.gitignore): `media_stats.json` and `media_stats.json.tmp` are ignored, same as `guild_data.json`.
+
+# Recent fixes
+- `/config-add` ([automod_cog.py](/automod_cog.py)): the command defers the interaction first, but then replied with `interaction.response.edit_message`, which fails on an interaction that was already responded to. It now uses `interaction.edit_original_response`. Keep that in mind for any command that defers: after `defer()`, always use `edit_original_response` or `followup`.
+- `EditChannelsAndRolesModal` ([modals.py](/DiscordUI/modals.py)): saving without selecting a logging channel crashed (`values[0]` on an empty list, even though the select allows 0 values). Leaving it empty now clears the logging channel.
+- `disable_component` ([automod_engine.py](/src/automod_engine.py)): the docstring said "Enables" instead of "Disables".
