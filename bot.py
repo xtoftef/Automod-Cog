@@ -7,6 +7,7 @@ from discord.ext import commands
 import logging
 import logging.handlers
 
+from _help_cog import HelpCog
 from automod_cog import AutomodCog
 from config import TEST, COG_CONFIG
 
@@ -70,6 +71,7 @@ async def main():
     # 2. Add Cogs & Adapters
     automod_cog = AutomodCog(bot, COG_CONFIG['memory'], COG_CONFIG['media_stats_storage'])
     await bot.add_cog(automod_cog)
+    await bot.add_cog(HelpCog(bot))
 
     # 3. Run Bot
     await bot.start(DISCORD_TOKEN)

@@ -8,8 +8,12 @@ The periodic attachment limiter is simply a component that places a limit of how
 
 After testing the cog, I found out that Discord sometimes sends two separate events for the same message when a message contains a link that needs to be rendered with an embed. This caused the component to miss some messages. Hence why some models were modified slightly to incorporate this new logic. Components that require messages to be cached for some time can now optionally implement a method to say that they need to receive edit updates.
 
+Additionally, added a cog that handles the help command. It can be optionally ignored if the automod cog is used in another system that already has its handling of a help command.
+The change was reflected in bot.py
+
 ## New Files:
 - [src/periodic_attachment_limiter.py](/src/automod_components/periodic_attachment_limiter.py)
+- [_help_cog](/_help_cog.py)
 
 ## Modified Files:
 ### [automod_cog.py](/automod_cog.py)

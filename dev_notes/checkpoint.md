@@ -21,6 +21,7 @@ Latest changes are logged in [CHANGELOG.MD](/CHANGELOG.md).
 - Master control panel. This panel allows server admins to view all the automod components they can activate/deactivate, the component's status and the option to modify the component's config. It also shows components that were not yet created and that can be created. This panel is a UI that has various buttons and helpful visual cues to make the experience more friendly.
 - Automod log embed. The bot will send a log to the configured channel and provide helpful information about why the automod was tripped and action taken by the bot. It also provides some additional functionality such as the ability to mark the log as read, send a dm to the flagged user or add/remove a timeout from the flagged user.
 - A command that allows server admins to start watching a channel for its media stats for a defined period. This is particularly useful to be able to fine-tune the automod component for the daily per user attachment limit.
+- Help command
 
 ## Currently existing components
 As of now, there are only two component functionalities that were implemented. I will explain them briefly below:
@@ -58,5 +59,5 @@ Since this is a checkpoint, I will cover other features that I plan to implement
 - Possible dashboard (not expected anytime soon LOL). Since modifying server settings from a website is often easier. 
 - Migrating from JSON storage to database (sqlite). Though, this must be kept for after, since the JSON based storage is a lot more flexible when the structure of the data we store changes actively, so that's more of a final step before deployment into production.
 - Import/Export config commands. Export command will cause the bot to output a JSON file containing the configuration of the server's automods and stuff. Import command would allow server admins to pass in a JSON file that was exported previously to override the current server config settings.
-- help command.
+- ~~help command.~~ IMPLEMENTED
 
