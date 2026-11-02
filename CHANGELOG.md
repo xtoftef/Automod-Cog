@@ -1,5 +1,41 @@
 # Changelog
 
+### LAST UPDATE DATE: 02/11/2026 (previous commit was documented elsewhere and skipped in the changelog)
+
+## Added Periodic Attachment Limiter component implementation + message_edit handling
+
+The periodic attachment limiter is simply a component that places a limit of how many messages containing specific attachments a user can send within a certain duration. This component is explained a little bit more in [checkpoint.md](/dev_notes/checkpoint.md).
+
+After testing the cog, I found out that Discord sometimes sends two separate events for the same message when a message contains a link that needs to be rendered with an embed. This caused the component to miss some messages. Hence why some models were modified slightly to incorporate this new logic. Components that require messages to be cached for some time can now optionally implement a method to say that they need to receive edit updates.
+
+## New Files:
+- [src/periodic_attachment_limiter.py](/src/automod_components/periodic_attachment_limiter.py)
+
+## Modified Files:
+### [automod_cog.py](/automod_cog.py)
+- Modified `AutomodCog` class:
+    - Updated the cog's docstring for in server display.
+    - Added `PENDING_EDIT_TTL_SECONDS` and `MAX_PENDING_EDIT_MESSAGES` constants/classvariables. They define for how long messages are cached and the maximum amount of messages that can be cached.
+    - Added `self.pending_edit_messages` attribute which is an ordered dictionary containing the cached messages.
+    - Added `_prune_pending_edit_messages` method.
+    - Added `_cache_message_for_edit` method.
+    - Modified `on_message` method accordingly.
+    - Added `test-attachment-detection` command, which helps test the periodic attachment detection.
+
+### [config.py](/config.py)
+- Added the new `periodic_attachment_limiter` component to the available components.
+
+### [DiscordUI/modals.py](/DiscordUI/modals.py)
+- Added `EditPeriodicAttachmentLimiterSpecificModal` class.
+
+### [src/automod_engine.py](/src/automod_engine.py)
+- Added `get_edit_relevant_component_keys` method to obtain components that must be notified of message edits.
+
+### [src/automod_models.py](/src/automod_models.py)
+- Modified `BaseAutomodComponent` class to add a `should_process_on_edit` method that defaults to False. Must be overriden if the component needs to receive edit events.
+
+
+
 ### LAST UPDATE DATE: 29/10/2026
 - Added internal logging. The internal logging is ready. HOWEVER, it was not implemented within the entire system. I only added it here and there withing automod_cog.py though we would find it useful to add more logging lines on the fly. The logger is set to save logs to `automod_debug.log` and `logger.debug()` lines only show up if the system is ran on test mode (`TEST` variable in your `.env` file). [logger_instructions.md](/dev_notes/logger_instructions.md) contains more instructions on the logging.
 - Added a `/ping` command for the bot. Might be removed in the future.

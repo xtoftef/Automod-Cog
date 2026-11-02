@@ -369,6 +369,10 @@ class BaseAutomodComponent(ABC, Generic[ManagerT, ConfigT]):
                 return True
         return False
 
+    def should_reprocess_on_edit(self, message: Message) -> bool:
+        """Return whether an edit could make this component flag the message."""
+        return False
+
     async def process_message(self, guild: Guild, channel: GuildChannel, message: Message) -> AutomodResponse:
         "Runs shared validity checks before dispatching to the component-specific handler."
         if not self.config.enabled:

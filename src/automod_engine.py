@@ -95,7 +95,11 @@ class AutomodEngine():
 
         return True
 
-    async def engine_process_message(self, message:Message) -> AutomodResponse:
+    async def engine_process_message(
+        self,
+        message: Message,
+        component_keys: set[str] | None = None,
+    ) -> AutomodResponse:
         """Functions as a routing to the different components. The engine routes to the respective set of automods assigned to a guild.
         Then the automods themselves route according to channel.
         Returns the first positive flag response"""
@@ -109,11 +113,25 @@ class AutomodEngine():
 
 
         for _, component in automod_component_dict.items():
+            if component_keys is not None and component.COMPONENT_KEY not in component_keys:
+                continue
             response = await component.process_message(guild, message.channel, message)
             if response.flagged:
                 return response
 
         return AutomodResponse(False, "No automod component was triggered", None, None)
+
+    def get_edit_relevant_component_keys(self, message: Message) -> set[str]:
+        """Find enabled components that may flag a message after a later edit."""
+        if not message.guild:
+            return set()
+
+        components = self.cache.get(str(message.guild.id), {})
+        return {
+            component.COMPONENT_KEY
+            for component in components.values()
+            if component.should_reprocess_on_edit(message)
+        }
 
 
     async def get_guild_components(self, guild_id: str) -> dict[str,BaseAutomodComponent]:
@@ -155,5 +173,4 @@ class AutomodEngine():
         except Exception as e:
             print(f"Ran into an unexpected exception: {e}")
             return False
-
 

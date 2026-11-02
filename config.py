@@ -8,7 +8,8 @@ from src.memory_manager_implementations import JSONMemoryManager
 from src.data_gathering.media_stats_storage import JSONMediaStatsStorage
 from src.automod_components.image_rate_limiter import ImageRateLimiterComponent, ImageRateLimiterComponentConfig
 from src.automod_components.reply_chain_prevention import ReplyChainPreventionComponent, ReplyChainPreventionComponentConfig
-from DiscordUI.modals import EditImageRateLimiterSpecificModal, EditChainPreventionSpecificModal
+from src.automod_components.periodic_attachment_limiter import PeriodicAttachmentLimitComponentConfig, PeriodicAttachmentLimiterComponent
+from DiscordUI.modals import EditImageRateLimiterSpecificModal, EditChainPreventionSpecificModal, EditPeriodicAttachmentLimiterSpecificModal
 
 # =============================================================================
 # TYPED DICTIONARY DECLARATIONS
@@ -51,6 +52,12 @@ ENGINE_CONFIG : EngineConfigDict = {
             "config_type" : ReplyChainPreventionComponentConfig,
             "component_type" : ReplyChainPreventionComponent,
             "modal_type" : EditChainPreventionSpecificModal
+        },
+        "periodic_attachment_limiter" : {
+            "activate" : True,
+            "config_type" : PeriodicAttachmentLimitComponentConfig,
+            "component_type": PeriodicAttachmentLimiterComponent,
+            "modal_type": EditPeriodicAttachmentLimiterSpecificModal
         }
 
     }

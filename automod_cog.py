@@ -2,9 +2,11 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
+from collections import OrderedDict
 from typing import cast, Literal, Optional
 from datetime import timedelta
 import io
+import time
 import discord
 
 
@@ -13,6 +15,7 @@ from src.data_gathering.media_stats_models import BaseMediaStatsStorage
 from src.data_gathering.media_stats_storage import JSONMediaStatsStorage
 from src.data_gathering.media_stats_collector import MediaStatsCollector
 from src.automod_engine import AutomodEngine
+from src.automod_components.periodic_attachment_limiter import PeriodicAttachmentLimiterComponent
 from src.automod_models import (
     BaseAutomodComponentConfig,BaseAutomodMemoryManager,
     AutomodLog,
@@ -30,7 +33,13 @@ DEFAULT_MEDIA_STATS_STORAGE = JSONMediaStatsStorage("media_stats.json")
 logger = get_logger("cog")
 
 class AutomodCog(commands.Cog):
-    "you can implement the commands and logic here, it also still supports the on_message function."
+    """Automod Component for the bot.
+    Allows server admins to manage a variety of automod types for different situations and needs.
+    Run `/open-master-panel` to get started.
+    """
+    # you can implement the commands and logic here, it also still supports the on_message function.
+    PENDING_EDIT_TTL_SECONDS = 30
+    MAX_PENDING_EDIT_MESSAGES = 1000
 
     def __init__(
         self,
@@ -44,6 +53,9 @@ class AutomodCog(commands.Cog):
         self.bot = bot
         self.automod_engine = AutomodEngine(memory, []) # NOTE: need to reset the list of guilds when the bot is ready.
         self.media_stats = MediaStatsCollector(media_stats_storage) # data gathering, independent from the engine
+        self.pending_edit_messages: OrderedDict[
+            int, tuple[discord.Message, frozenset[str], float]
+        ] = OrderedDict()
         # you may modify the constructor if you see it needed
 
         logger.info("Automod Cog successfully initialized")
@@ -70,17 +82,67 @@ class AutomodCog(commands.Cog):
             return
         # Recorded before the automod runs, so messages the automod deletes are still counted
         self.media_stats.record_message(message)
+        self._cache_message_for_edit(message)
 
         response = await self.automod_engine.engine_process_message(message)
 
         if response.flagged:
+            self.pending_edit_messages.pop(message.id, None)
             logger.debug("Flagged an automod. Handling response.")
             await self._handle_automod_response(response, message)
+
+    def _prune_pending_edit_messages(self) -> None:
+        now = time.monotonic()
+        while (
+            self.pending_edit_messages
+            and next(iter(self.pending_edit_messages.values()))[2] <= now
+        ):
+            self.pending_edit_messages.popitem(last=False)
+
+    def _cache_message_for_edit(self, message: discord.Message) -> None:
+        self._prune_pending_edit_messages()
+        component_keys = self.automod_engine.get_edit_relevant_component_keys(message)
+        if not component_keys:
+            return
+
+        self.pending_edit_messages[message.id] = (
+            message,
+            frozenset(component_keys),
+            time.monotonic() + self.PENDING_EDIT_TTL_SECONDS,
+        )
+        self.pending_edit_messages.move_to_end(message.id)
+        while len(self.pending_edit_messages) > self.MAX_PENDING_EDIT_MESSAGES:
+            self.pending_edit_messages.popitem(last=False)
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
         """Link embeds (tenor gifs, image/video links) are usually added by Discord after the message was sent,
         through an edit. Only those late embeds are recorded, attachments were already counted in on_message."""
+        self._prune_pending_edit_messages()
+        pending = self.pending_edit_messages.get(after.id)
+        if pending is not None:
+            _, component_keys, expires_at = pending
+            response = await self.automod_engine.engine_process_message(
+                after,
+                set(component_keys),
+            )
+            if response.flagged:
+                self.pending_edit_messages.pop(after.id, None)
+                await self._handle_automod_response(response, after)
+            else:
+                still_relevant = (
+                    self.automod_engine.get_edit_relevant_component_keys(after)
+                    & set(component_keys)
+                )
+                if still_relevant and expires_at > time.monotonic():
+                    self.pending_edit_messages[after.id] = (
+                        after,
+                        frozenset(still_relevant),
+                        expires_at,
+                    )
+                else:
+                    self.pending_edit_messages.pop(after.id, None)
+
         if before.embeds or not after.embeds:
             return
         self.media_stats.record_message(after, attachments=False)
@@ -552,6 +614,79 @@ class AutomodCog(commands.Cog):
     async def dummy_config(self, interaction:discord.Interaction):
         "Test command for a dummy."
         # NOTE: emptied since it's not really used now, and used to cause an unnecessary import.
+
+    @app_commands.command(
+        name="test-attachment-detection",
+        description="Inspect whether a message matches the periodic attachment limiter.",
+    )
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only
+    async def test_periodic_attachment_detection(
+        self,
+        interaction: discord.Interaction,
+        msg_id: str,
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        if not interaction.guild:
+            await interaction.edit_original_response(
+                content="This command can only be used in a server."
+            )
+            return
+        if not interaction.channel or isinstance(
+            interaction.channel, (discord.ForumChannel, discord.CategoryChannel)
+        ):
+            await interaction.edit_original_response(
+                content="Run this command in a channel where the target message can be fetched."
+            )
+            return
+
+        try:
+            message_id = int(msg_id)
+            if message_id <= 0:
+                raise ValueError
+        except ValueError:
+            await interaction.edit_original_response(
+                content="The message ID must be a positive whole number."
+            )
+            return
+
+        try:
+            message = await interaction.channel.fetch_message(message_id)
+        except discord.NotFound:
+            await interaction.edit_original_response(
+                content=f"Message `{message_id}` was not found in this channel."
+            )
+            return
+        except discord.Forbidden:
+            await interaction.edit_original_response(
+                content="I don't have permission to fetch messages in this channel."
+            )
+            return
+        except discord.HTTPException as error:
+            logger.exception("Failed to fetch message for attachment detection test.")
+            await interaction.edit_original_response(
+                content=f"Discord could not fetch that message: {error}"
+            )
+            return
+
+        flags, details = PeriodicAttachmentLimiterComponent.test_media_detection(message)
+        result = "✅ **Would flag**" if flags else "❌ **Would not flag**"
+        embed = discord.Embed(
+            title="Periodic Attachment Limiter Detection",
+            description=result,
+            color=discord.Color.orange() if flags else discord.Color.blue(),
+        )
+        embed.add_field(
+            name="Message",
+            value=f"`{message.id}` in channel `{message.channel.id}` by {message.author.mention}",
+            inline=False,
+        )
+        details_text = "\n".join(details)
+        if len(details_text) > 1024:
+            details_text = f"{details_text[:1021]}..."
+        embed.add_field(name="Detection details", value=details_text, inline=False)
+        await interaction.edit_original_response(embed=embed)
 
 
     @app_commands.command(name= "test-automod")

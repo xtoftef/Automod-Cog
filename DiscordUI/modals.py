@@ -35,6 +35,7 @@ from src.automod_models import (
 )
 from src.automod_components.image_rate_limiter import ImageRateLimiterComponentConfig
 from src.automod_components.reply_chain_prevention import ReplyChainPreventionComponentConfig
+from src.automod_components.periodic_attachment_limiter import PeriodicAttachmentLimitComponentConfig
 
 from .ui_utils import *
 
@@ -657,6 +658,92 @@ class EditChainPreventionSpecificModal(BaseComponentSpecificModal):
         self.draft_config.duration = duration
         await self.refresh_panel(interaction)
 
+# ----------------------------- Periodic Attachment Limiter -----------------------------
+class EditPeriodicAttachmentLimiterSpecificModal(BaseComponentSpecificModal):
+    "Unique modal for modifying the settings that are unique to the periodic attachment limiter automod component"
+    COMPONENT_KEY: ClassVar[str] = PeriodicAttachmentLimitComponentConfig.COMPONENT_KEY
+    @property
+    def draft_config(self) -> PeriodicAttachmentLimitComponentConfig:
+        return cast(PeriodicAttachmentLimitComponentConfig, self.panel.draft_config)
+
+    def __init__(self, panel: AutomodComponentConfigPanelView) -> None:
+        super().__init__(panel, title="Edit Automod Sensitivity")
+        config : PeriodicAttachmentLimitComponentConfig = self.draft_config
+        self.attachment_limit_input = discord.ui.TextInput(
+            default=str(config.attachment_limit_count),
+            placeholder="Positive whole number",
+            required=True,
+            max_length=10,
+        )
+        self.duration_input = discord.ui.TextInput(
+            default=str(config.period_duration_minutes),
+            placeholder="Positive number of minutes",
+            required=True,
+            max_length=20,
+        )
+        self.scope_input = discord.ui.RadioGroup(
+            options=[
+                discord.RadioGroupOption(
+                    label="Share quota across all configured channels",
+                    value="global",
+                    default=config.share_quota_across_channels,
+                ),
+                discord.RadioGroupOption(
+                    label="Keep a separate quota for each channel",
+                    value="per-channel",
+                    default=not config.share_quota_across_channels,
+                ),
+            ],
+        )
+        for label, component in (
+            ("Maximum periodic media messages", self.attachment_limit_input),
+            ("Periodic duration length (minutes)", self.duration_input),
+            ("Quota scope", self.scope_input),
+        ):
+            self.add_item(discord.ui.Label(text=label, component=component))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            attachment_limit = int(self.attachment_limit_input.value)
+            duration = int(self.duration_input.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "Enter a whole number for the maximum media messages "
+                "and a whole number for the periodic duration.",
+                ephemeral=True,
+            )
+            return
+
+        scope = self.scope_input.value
+        if scope is None:
+            await interaction.response.send_message(
+                "Choose a quota scope before submitting.",
+                ephemeral=True,
+            )
+            return
+
+        if (
+            attachment_limit < 1
+            or not math.isfinite(duration)
+            or duration <= 0
+        ):
+            await interaction.response.send_message(
+                "All sensitivity values must be greater than zero.",
+                ephemeral=True,
+            )
+            return
+
+        if scope not in {"global", "per-channel"}:
+            await interaction.response.send_message(
+                "The selected quota scope is invalid. Please try again.",
+                ephemeral=True,
+            )
+            return
+
+        self.draft_config.attachment_limit_count = attachment_limit
+        self.draft_config.period_duration_minutes = duration
+        self.draft_config.share_quota_across_channels = scope == "global"
+        await self.refresh_panel(interaction)
 
 def unique_modal_router(
     config: BaseAutomodComponentConfig,
