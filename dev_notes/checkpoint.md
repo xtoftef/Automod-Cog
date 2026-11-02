@@ -1,4 +1,4 @@
-DATE OF UPDATE: 20/10/2026
+DATE OF UPDATE: 02/11/2026
 
 This file is mostly just a status check on the automod cog system, I'll simply be going through what has been achieved and what's left to do.
 
